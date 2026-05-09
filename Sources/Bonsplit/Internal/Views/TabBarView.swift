@@ -1019,7 +1019,7 @@ struct TabBarView: View {
             splitButtonBackdropChrome
                 .opacity(shouldShowSplitButtons ? 1 : 0)
                 .allowsHitTesting(false)
-                .animation(.easeInOut(duration: 0.14), value: shouldShowSplitButtons)
+                .tabBarButtonAnimationsDisabled()
         }
         .overlay(maskedTabBarBottomSeparatorChrome)
         .overlay {
@@ -1050,10 +1050,10 @@ struct TabBarView: View {
             onDoubleClick: {
                 performNewTerminalSplitButtonAction()
             },
-            onHoverChanged: { isHoveringTabBar = $0 }
+            onHoverChanged: { updateTabBarHover($0) }
         ))
         .overlay(
-            TabBarHoverTrackingView { isHoveringTabBar = $0 }
+            TabBarHoverTrackingView { updateTabBarHover($0) }
         )
         .overlay(
             TabBarManualReorderTrackingView(
@@ -1103,6 +1103,12 @@ struct TabBarView: View {
     }
 
     // MARK: - Tab Item
+
+    private func updateTabBarHover(_ hovering: Bool) {
+        withTransaction(Transaction(animation: nil)) {
+            isHoveringTabBar = hovering
+        }
+    }
 
     @ViewBuilder
     private func tabItem(for tab: TabItem, at index: Int) -> some View {
@@ -1360,8 +1366,8 @@ struct TabBarView: View {
                 .saturation(tabBarSaturation)
                 .opacity(shouldShowSplitButtons ? 1 : 0)
                 .allowsHitTesting(shouldShowSplitButtons)
-            .frame(height: tabBarHeight, alignment: .trailing)
-            .animation(.easeInOut(duration: 0.14), value: shouldShowSplitButtons)
+                .frame(height: tabBarHeight, alignment: .trailing)
+                .tabBarButtonAnimationsDisabled()
         }
     }
 
@@ -1863,7 +1869,7 @@ private struct SplitActionButtonStyle: ButtonStyle {
             .contentShape(Rectangle())
             .foregroundStyle(TabBarColors.splitActionIcon(for: appearance, isPressed: configuration.isPressed))
             .opacity(configuration.isPressed ? 0.72 : 1.0)
-            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+            .tabBarButtonAnimationsDisabled()
     }
 }
 
