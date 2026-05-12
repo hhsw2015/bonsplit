@@ -47,16 +47,6 @@ public enum BonsplitTabBarHitRegionRegistry {
     }
 }
 
-private struct SelectedTabFramePreferenceKey: PreferenceKey {
-    static let defaultValue: CGRect? = nil
-
-    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
-        if let next = nextValue() {
-            value = next
-        }
-    }
-}
-
 private struct TabFramePreferenceKey: PreferenceKey {
     static let defaultValue: [UUID: CGRect] = [:]
 
@@ -249,6 +239,14 @@ enum TabBarStyling {
 
     static func splitActionButtonImage(from data: Data) -> NSImage? {
         SplitActionButtonImageCache.shared.image(for: data)
+    }
+
+    static func selectedTabFrame(
+        selectedTabId: UUID?,
+        tabFrames: [UUID: CGRect]
+    ) -> CGRect? {
+        guard let selectedTabId else { return nil }
+        return tabFrames[selectedTabId]
     }
 
     enum ScrollTarget: Equatable {
@@ -762,7 +760,6 @@ struct TabBarView: View {
     @State private var scrollOffset: CGFloat = 0
     @State private var contentWidth: CGFloat = 0
     @State private var containerWidth: CGFloat = 0
-    @State private var selectedTabFrameInBar: CGRect?
     @State private var tabFramesInBar: [UUID: CGRect] = [:]
     @State private var measuredSplitButtonLaneWidth: CGFloat = 0
     @State private var splitButtonScrollOffset: CGFloat = 0
@@ -847,6 +844,13 @@ struct TabBarView: View {
 
     private var trailingTabContentInset: CGFloat {
         tabBarLayout.trailingTabContentInset
+    }
+
+    private var selectedTabFrameInBar: CGRect? {
+        TabBarStyling.selectedTabFrame(
+            selectedTabId: pane.selectedTabId,
+            tabFrames: tabFramesInBar
+        )
     }
 
     private var leadingScrollAnchorId: String {
@@ -1088,11 +1092,10 @@ struct TabBarView: View {
         .onAppear {
             controlKeyMonitor.start()
         }
-        .onPreferenceChange(SelectedTabFramePreferenceKey.self) { frame in
-            selectedTabFrameInBar = frame
-        }
         .onPreferenceChange(TabFramePreferenceKey.self) { frames in
-            tabFramesInBar = frames
+            withTransaction(Transaction(animation: nil)) {
+                tabFramesInBar = frames
+            }
         }
         .onPreferenceChange(SplitButtonLaneWidthPreferenceKey.self) { width in
             measuredSplitButtonLaneWidth = width
@@ -1167,10 +1170,6 @@ struct TabBarView: View {
             GeometryReader { geometry in
                 let frame = geometry.frame(in: .named("tabBar"))
                 Color.clear
-                    .preference(
-                        key: SelectedTabFramePreferenceKey.self,
-                        value: pane.selectedTabId == tab.id ? frame : nil
-                    )
                     .preference(
                         key: TabFramePreferenceKey.self,
                         value: [tab.id: frame]
