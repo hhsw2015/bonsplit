@@ -223,6 +223,13 @@ final class BonsplitTests: XCTestCase {
         XCTAssertEqual(defaults.splitDown, "Split Down")
     }
 
+    func testTabBarButtonChromeDisablesIncidentalAnimations() {
+        XCTAssertTrue(
+            TabBarButtonAnimationPolicy.disablesIncidentalButtonAnimations,
+            "Tab bar button hover/press/visibility chrome must not animate; rapid shortcut tab selection should not inherit stale button animation transactions."
+        )
+    }
+
     func testDefaultSplitActionButtons() {
         XCTAssertEqual(
             BonsplitConfiguration.SplitActionButton.defaults,
