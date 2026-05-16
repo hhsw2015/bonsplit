@@ -1283,6 +1283,13 @@ struct TabBarView: View {
                 completion(data, nil)
                 return nil
             }
+            provider.registerDataRepresentation(
+                forTypeIdentifier: "\(UTType.tabTransfer.identifier).source-process.\(ProcessInfo.processInfo.processIdentifier)",
+                visibility: .ownProcess
+            ) { completion in
+                completion(Data(), nil)
+                return nil
+            }
 #if DEBUG
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
                 let types = NSPasteboard(name: .drag).types?.map(\.rawValue).joined(separator: ",") ?? "-"
