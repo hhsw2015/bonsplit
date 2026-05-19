@@ -394,7 +394,6 @@ struct TabItemView: View {
             // Keep icon rendering stable while hovering; only accessory/background elements animate.
             isHovered = hovering
         }
-        .accessibilityIdentifier("paneTab.\(tab.id.uuidString)")
         .accessibilityElement(children: isInlineRenaming ? .contain : .combine)
         .accessibilityLabel(tab.title)
         .accessibilityValue(accessibilityValue)
