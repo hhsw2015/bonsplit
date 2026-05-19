@@ -81,6 +81,7 @@ final class BonsplitTests: XCTestCase {
         var tabId: TabID?
         var paneId: PaneID?
         var moveDestinationId: String?
+        var inlineRenameTitle: String?
 
         func splitTabBar(_ controller: BonsplitController, didRequestTabContextAction action: TabContextAction, for tab: Bonsplit.Tab, inPane pane: PaneID) {
             self.action = action
@@ -92,6 +93,12 @@ final class BonsplitTests: XCTestCase {
             self.moveDestinationId = destinationId
             self.tabId = tab.id
             self.paneId = pane
+        }
+
+        func splitTabBar(_ controller: BonsplitController, didCommitInlineRename title: String, for tab: Bonsplit.Tab, inPane pane: PaneID) {
+            inlineRenameTitle = title
+            tabId = tab.id
+            paneId = pane
         }
     }
 
@@ -1355,6 +1362,21 @@ final class BonsplitTests: XCTestCase {
         controller.requestTabMove(toDestination: "workspace:abc", for: tabId, inPane: pane)
 
         XCTAssertEqual(spy.moveDestinationId, "workspace:abc")
+        XCTAssertEqual(spy.tabId, tabId)
+        XCTAssertEqual(spy.paneId, pane)
+    }
+
+    @MainActor
+    func testRequestInlineTabRenameForwardsToDelegate() {
+        let controller = BonsplitController()
+        let pane = controller.focusedPaneId!
+        let tabId = controller.createTab(title: "Test", kind: "terminal")!
+        let spy = TabContextActionDelegateSpy()
+        controller.delegate = spy
+
+        controller.requestInlineTabRename("Inline Title", for: tabId, inPane: pane)
+
+        XCTAssertEqual(spy.inlineRenameTitle, "Inline Title")
         XCTAssertEqual(spy.tabId, tabId)
         XCTAssertEqual(spy.paneId, pane)
     }

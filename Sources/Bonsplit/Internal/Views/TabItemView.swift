@@ -45,10 +45,94 @@ enum TabItemStyling {
     }
 }
 
+private struct InlineTabRenameField: NSViewRepresentable {
+    let initialTitle: String
+    let fontSize: CGFloat
+    let onCommit: (String) -> Void
+    let onCancel: () -> Void
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: InlineTabRenameField
+        var didFinish = false
+
+        init(parent: InlineTabRenameField) {
+            self.parent = parent
+        }
+
+        func finishCommit(_ title: String) {
+            guard !didFinish else { return }
+            didFinish = true
+            parent.onCommit(title)
+        }
+
+        func finishCancel() {
+            guard !didFinish else { return }
+            didFinish = true
+            parent.onCancel()
+        }
+
+        func controlTextDidEndEditing(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            finishCommit(field.stringValue)
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            switch commandSelector {
+            case #selector(NSResponder.insertNewline(_:)):
+                guard !textView.hasMarkedText() else { return false }
+                finishCommit(textView.string)
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                guard !textView.hasMarkedText() else { return false }
+                finishCancel()
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: initialTitle)
+        field.delegate = context.coordinator
+        field.isBordered = false
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: fontSize)
+        field.lineBreakMode = .byTruncatingTail
+        field.cell?.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.setAccessibilityIdentifier("paneTab.inlineRenameField")
+
+        DispatchQueue.main.async {
+            guard !context.coordinator.didFinish else { return }
+            field.window?.makeFirstResponder(field)
+            field.currentEditor()?.selectAll(nil)
+        }
+
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.parent = self
+        field.font = .systemFont(ofSize: fontSize)
+        if field.currentEditor() == nil, field.stringValue != initialTitle {
+            field.stringValue = initialTitle
+        }
+    }
+}
+
 /// Individual tab view with icon, title, close button, and dirty indicator
 struct TabItemView: View {
     let tab: TabItem
     let isSelected: Bool
+    let isInlineRenaming: Bool
     let showsZoomIndicator: Bool
     let appearance: BonsplitConfiguration.Appearance
     let saturation: Double
@@ -61,6 +145,8 @@ struct TabItemView: View {
     let onSelect: () -> Void
     let onClose: () -> Void
     let onZoomToggle: () -> Void
+    let onInlineRenameCommit: (String) -> Void
+    let onInlineRenameCancel: () -> Void
     let onContextAction: (TabContextAction) -> Void
     let onMoveDestination: (String) -> Void
 
@@ -131,15 +217,26 @@ struct TabItemView: View {
                 }
                 .onChange(of: tab.icon) { _ in updateGlobeFallback() }
 
-                Text(tab.title)
-                    .font(.system(size: appearance.tabTitleFontSize))
-                    .lineLimit(1)
-                    .foregroundStyle(
-                        isSelected
-                            ? TabBarColors.activeText(for: appearance)
-                            : TabBarColors.inactiveText(for: appearance)
+                if isInlineRenaming {
+                    InlineTabRenameField(
+                        initialTitle: tab.title,
+                        fontSize: appearance.tabTitleFontSize,
+                        onCommit: onInlineRenameCommit,
+                        onCancel: onInlineRenameCancel
                     )
-                    .saturation(saturation)
+                    .frame(minWidth: 44, maxWidth: .infinity, minHeight: 18, maxHeight: 22)
+                    .layoutPriority(1)
+                } else {
+                    Text(tab.title)
+                        .font(.system(size: appearance.tabTitleFontSize))
+                        .lineLimit(1)
+                        .foregroundStyle(
+                            isSelected
+                                ? TabBarColors.activeText(for: appearance)
+                                : TabBarColors.inactiveText(for: appearance)
+                        )
+                        .saturation(saturation)
+                }
 
                 if showsZoomIndicator {
                     Button {
@@ -200,16 +297,11 @@ struct TabItemView: View {
         .onTapGesture {
             onSelect()
         }
-        .simultaneousGesture(
-            TapGesture(count: 2).onEnded {
-                onZoomToggle()
-            }
-        )
         .onHover { hovering in
             // Keep icon rendering stable while hovering; only accessory/background elements animate.
             isHovered = hovering
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: isInlineRenaming ? .contain : .combine)
         .accessibilityLabel(tab.title)
         .accessibilityValue(accessibilityValue)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -876,12 +968,13 @@ private struct TabContextMenuPresenter: NSViewRepresentable {
 
         let coordinator = context.coordinator
         coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { [weak coordinator] event in
-            guard event.type == .rightMouseDown || event.modifierFlags.contains(.control) else { return event }
             guard let coordinator, let view = coordinator.view, let window = view.window else { return event }
             guard event.window === window else { return event }
 
             let point = view.convert(event.locationInWindow, from: nil)
             guard view.bounds.contains(point) else { return event }
+
+            guard event.type == .rightMouseDown || event.modifierFlags.contains(.control) else { return event }
 
             coordinator.presentMenu(at: point, in: view)
             return nil
