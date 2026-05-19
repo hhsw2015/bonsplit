@@ -179,7 +179,7 @@ private struct InlineTabRenameField: NSViewRepresentable {
             fieldEditor.insertionPointColor = parent.textColor
             fieldEditor.selectedTextAttributes = [
                 .foregroundColor: NSColor.clear,
-                .backgroundColor: NSColor.clear,
+                .backgroundColor: NSColor.selectedTextBackgroundColor.withAlphaComponent(0.42),
             ]
         }
 
