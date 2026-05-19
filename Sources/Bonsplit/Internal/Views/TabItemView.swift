@@ -52,15 +52,48 @@ private struct InlineTabRenameField: NSViewRepresentable {
     let onCommit: (String) -> Void
     let onCancel: () -> Void
 
-    private final class InlineRenameTextField: NSTextField {
-        var fixedHeight: CGFloat = 16 {
-            didSet { invalidateIntrinsicContentSize() }
+    fileprivate final class InlineRenameTextField: NSTextField {}
+
+    fileprivate final class InlineRenameHostView: NSView {
+        let field: InlineRenameTextField
+        var contentHeight: CGFloat {
+            didSet {
+                invalidateIntrinsicContentSize()
+                needsLayout = true
+            }
+        }
+        var onAttachToWindow: ((NSTextField) -> Void)?
+        private var didRequestInitialFocus = false
+
+        init(field: InlineRenameTextField, contentHeight: CGFloat) {
+            self.field = field
+            self.contentHeight = contentHeight
+            super.init(frame: .zero)
+            addSubview(field)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            nil
         }
 
         override var intrinsicContentSize: NSSize {
-            var size = super.intrinsicContentSize
-            size.height = fixedHeight
-            return size
+            NSSize(width: NSView.noIntrinsicMetric, height: contentHeight)
+        }
+
+        override func layout() {
+            super.layout()
+            let naturalFieldHeight = max(1, ceil(field.intrinsicContentSize.height))
+            let fieldHeight = min(naturalFieldHeight, max(1, bounds.height))
+            let fieldY = floor((bounds.height - fieldHeight) / 2)
+            field.frame = NSRect(x: 0, y: fieldY, width: bounds.width, height: fieldHeight)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil, !didRequestInitialFocus else { return }
+            didRequestInitialFocus = true
+            onAttachToWindow?(field)
         }
     }
 
@@ -147,9 +180,8 @@ private struct InlineTabRenameField: NSViewRepresentable {
         Coordinator(parent: self)
     }
 
-    func makeNSView(context: Context) -> NSTextField {
+    fileprivate func makeNSView(context: Context) -> InlineRenameHostView {
         let field = InlineRenameTextField(string: initialTitle)
-        field.fixedHeight = height
         field.delegate = context.coordinator
         field.isBordered = false
         field.isBezeled = false
@@ -164,22 +196,21 @@ private struct InlineTabRenameField: NSViewRepresentable {
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        DispatchQueue.main.async {
-            guard !context.coordinator.didFinish else { return }
-            context.coordinator.attach(to: field)
-            field.window?.makeFirstResponder(field)
-            field.currentEditor()?.selectAll(nil)
+        let host = InlineRenameHostView(field: field, contentHeight: height)
+        host.onAttachToWindow = { [coordinator = context.coordinator] field in
+            guard !coordinator.didFinish else { return }
+            coordinator.attach(to: field)
+            field.selectText(nil)
         }
 
-        return field
+        return host
     }
 
-    func updateNSView(_ field: NSTextField, context: Context) {
+    fileprivate func updateNSView(_ host: InlineRenameHostView, context: Context) {
         context.coordinator.parent = self
+        let field = host.field
         field.font = .systemFont(ofSize: fontSize)
-        if let field = field as? InlineRenameTextField {
-            field.fixedHeight = height
-        }
+        host.contentHeight = height
         if field.currentEditor() == nil, field.stringValue != initialTitle {
             field.stringValue = initialTitle
         }
@@ -277,20 +308,20 @@ struct TabItemView: View {
                 .onChange(of: tab.icon) { _ in updateGlobeFallback() }
 
                 if isInlineRenaming {
-                    ZStack(alignment: .leading) {
-                        titleLabel
-                            .hidden()
-                        InlineTabRenameField(
-                            initialTitle: tab.title,
-                            fontSize: appearance.tabTitleFontSize,
-                            height: titleLineHeight,
-                            onCommit: onInlineRenameCommit,
-                            onCancel: onInlineRenameCancel
-                        )
-                        .frame(minWidth: 44, maxWidth: .infinity, minHeight: titleLineHeight, maxHeight: titleLineHeight)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .layoutPriority(1)
+                    titleLabel
+                        .hidden()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .leading) {
+                            InlineTabRenameField(
+                                initialTitle: tab.title,
+                                fontSize: appearance.tabTitleFontSize,
+                                height: titleLineHeight,
+                                onCommit: onInlineRenameCommit,
+                                onCancel: onInlineRenameCancel
+                            )
+                            .frame(minWidth: 44, maxWidth: .infinity, minHeight: titleLineHeight, maxHeight: titleLineHeight)
+                        }
+                        .layoutPriority(1)
                 } else {
                     titleLabel
                 }
