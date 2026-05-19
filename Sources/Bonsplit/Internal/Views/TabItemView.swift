@@ -145,6 +145,7 @@ struct TabItemView: View {
     let onSelect: () -> Void
     let onClose: () -> Void
     let onZoomToggle: () -> Void
+    let onInlineRenameRequest: () -> Void
     let onInlineRenameCommit: (String) -> Void
     let onInlineRenameCancel: () -> Void
     let onContextAction: (TabContextAction) -> Void
@@ -297,6 +298,11 @@ struct TabItemView: View {
         .onTapGesture {
             onSelect()
         }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                onInlineRenameRequest()
+            }
+        )
         .onHover { hovering in
             // Keep icon rendering stable while hovering; only accessory/background elements animate.
             isHovered = hovering

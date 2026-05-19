@@ -1076,16 +1076,7 @@ struct TabBarView: View {
                 tabFrames: tabFramesInBar,
                 dropTargetIndex: $dropTargetIndex,
                 dropLifecycle: $dropLifecycle
-            ) { tabId in
-#if DEBUG
-                dlog("tab.doubleClick.rename pane=\(pane.id.id.uuidString.prefix(5)) tab=\(tabId.uuidString.prefix(5))")
-#endif
-                withTransaction(Transaction(animation: nil)) {
-                    pane.selectTab(tabId)
-                    controller.focusPane(pane.id)
-                }
-                inlineRenamingTabId = tabId
-            }
+            )
         )
         .background(
             TabBarHostWindowReader { window in
@@ -1177,6 +1168,16 @@ struct TabBarView: View {
             },
             onZoomToggle: {
                 _ = controller.requestTabZoomToggle(for: TabID(id: tab.id), inPane: pane.id)
+            },
+            onInlineRenameRequest: {
+#if DEBUG
+                dlog("tab.doubleClick.rename pane=\(pane.id.id.uuidString.prefix(5)) tab=\(tab.id.uuidString.prefix(5))")
+#endif
+                withTransaction(Transaction(animation: nil)) {
+                    pane.selectTab(tab.id)
+                    controller.focusPane(pane.id)
+                }
+                inlineRenamingTabId = tab.id
             },
             onInlineRenameCommit: { title in
                 inlineRenamingTabId = nil
@@ -2029,7 +2030,6 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
     let tabFrames: [UUID: CGRect]
     @Binding var dropTargetIndex: Int?
     @Binding var dropLifecycle: TabDropLifecycle
-    let onTabDoubleClick: (UUID) -> Void
 
     func makeNSView(context: Context) -> ManualReorderNSView {
         let view = ManualReorderNSView()
@@ -2050,28 +2050,17 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
             dropTargetIndex = targetIndex
             dropLifecycle = lifecycle
         }
-        view.onTabDoubleClick = onTabDoubleClick
     }
 
     final class ManualReorderNSView: NSView {
-        private struct ClickRecord {
-            let windowNumber: Int
-            let tabId: UUID
-            let clickCount: Int
-            let timestamp: TimeInterval
-            let locationInWindow: NSPoint
-        }
-
         weak var pane: PaneState?
         weak var bonsplitController: BonsplitController?
         weak var splitViewController: SplitViewController?
         var tabFrames: [UUID: CGRect] = [:]
         var onDropStateChanged: ((Int?, TabDropLifecycle) -> Void)?
-        var onTabDoubleClick: ((UUID) -> Void)?
 
         private var localMouseMonitor: Any?
         private var session: ManualDragSession?
-        private var lastClick: ClickRecord?
 
         private static let dragStartDistanceSquared: CGFloat = 16
         private static let trailingDropSlop: CGFloat = 30
@@ -2132,24 +2121,23 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
 
             switch event.type {
             case .leftMouseDown:
-                beginTrackingIfNeeded(at: point, event: event, window: window)
+                beginTrackingIfNeeded(at: point)
             case .leftMouseDragged:
                 updateTracking(at: point)
             case .leftMouseUp:
-                finishTracking(event: event)
+                finishTracking()
             default:
                 break
             }
         }
 
-        private func beginTrackingIfNeeded(at point: NSPoint, event: NSEvent, window: NSWindow) {
+        private func beginTrackingIfNeeded(at point: NSPoint) {
             guard bounds.contains(point),
                   let pane,
                   let splitViewController,
                   splitViewController.isInteractive,
                   let source = tab(at: point, in: pane) else {
                 clearManualDrag()
-                lastClick = nil
                 return
             }
 
@@ -2157,13 +2145,6 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
                 sourceTab: source,
                 sourcePaneId: pane.id,
                 startPoint: point,
-                clickRecord: ClickRecord(
-                    windowNumber: window.windowNumber,
-                    tabId: source.id,
-                    clickCount: event.clickCount,
-                    timestamp: event.timestamp,
-                    locationInWindow: event.locationInWindow
-                ),
                 currentTargetIndex: nil,
                 didStartDrag: false
             )
@@ -2176,7 +2157,6 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
             let dy = point.y - session.startPoint.y
             if !session.didStartDrag {
                 guard dx * dx + dy * dy >= Self.dragStartDistanceSquared else { return }
-                lastClick = nil
                 beginManualDrag(for: session)
                 session.didStartDrag = true
             }
@@ -2193,7 +2173,7 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
             }
         }
 
-        private func finishTracking(event: NSEvent) {
+        private func finishTracking() {
             guard let session else {
                 clearManualDrag()
                 return
@@ -2202,11 +2182,6 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
             defer {
                 clearControllerDragStateIfNeeded(sourceTabId: session.sourceTab.id)
                 clearManualDrag()
-            }
-
-            if !session.didStartDrag {
-                finishClick(session.clickRecord, mouseUpEvent: event)
-                return
             }
 
             guard session.didStartDrag,
@@ -2222,50 +2197,6 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
                 pane.moveTab(from: currentSourceIndex, to: targetIndex)
                 bonsplitController.focusPane(pane.id)
             }
-        }
-
-        private func finishClick(_ click: ClickRecord, mouseUpEvent event: NSEvent) {
-            let dx = event.locationInWindow.x - click.locationInWindow.x
-            let dy = event.locationInWindow.y - click.locationInWindow.y
-            guard hypot(dx, dy) <= 6 else {
-                lastClick = nil
-                return
-            }
-
-            if formsDoubleClick(click) {
-                lastClick = nil
-                onTabDoubleClick?(click.tabId)
-            } else {
-                lastClick = click
-            }
-        }
-
-        private func formsDoubleClick(_ click: ClickRecord) -> Bool {
-            if click.clickCount >= 2 {
-                return true
-            }
-
-            guard let lastClick,
-                  lastClick.windowNumber == click.windowNumber,
-                  lastClick.tabId == click.tabId else {
-                return false
-            }
-
-            let allowedInterval = NSEvent.doubleClickInterval + syntheticDoubleClickTolerance
-            let elapsed = click.timestamp - lastClick.timestamp
-            guard elapsed >= 0, elapsed <= allowedInterval else { return false }
-
-            let dx = click.locationInWindow.x - lastClick.locationInWindow.x
-            let dy = click.locationInWindow.y - lastClick.locationInWindow.y
-            return hypot(dx, dy) <= 6
-        }
-
-        private var syntheticDoubleClickTolerance: TimeInterval {
-#if DEBUG
-            0.15
-#else
-            0
-#endif
         }
 
         private func beginManualDrag(for session: ManualDragSession) {
@@ -2345,7 +2276,6 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
             let sourceTab: TabItem
             let sourcePaneId: PaneID
             let startPoint: NSPoint
-            let clickRecord: ClickRecord
             var currentTargetIndex: Int?
             var didStartDrag: Bool
         }
