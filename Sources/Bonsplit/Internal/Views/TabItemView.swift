@@ -277,25 +277,22 @@ struct TabItemView: View {
                 .onChange(of: tab.icon) { _ in updateGlobeFallback() }
 
                 if isInlineRenaming {
-                    InlineTabRenameField(
-                        initialTitle: tab.title,
-                        fontSize: appearance.tabTitleFontSize,
-                        height: titleLineHeight,
-                        onCommit: onInlineRenameCommit,
-                        onCancel: onInlineRenameCancel
-                    )
-                    .frame(minWidth: 44, maxWidth: .infinity, minHeight: titleLineHeight, maxHeight: titleLineHeight)
+                    ZStack(alignment: .leading) {
+                        titleLabel
+                            .hidden()
+                        InlineTabRenameField(
+                            initialTitle: tab.title,
+                            fontSize: appearance.tabTitleFontSize,
+                            height: titleLineHeight,
+                            onCommit: onInlineRenameCommit,
+                            onCancel: onInlineRenameCancel
+                        )
+                        .frame(minWidth: 44, maxWidth: .infinity, minHeight: titleLineHeight, maxHeight: titleLineHeight)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .layoutPriority(1)
                 } else {
-                    Text(tab.title)
-                        .font(.system(size: appearance.tabTitleFontSize))
-                        .lineLimit(1)
-                        .foregroundStyle(
-                            isSelected
-                                ? TabBarColors.activeText(for: appearance)
-                                : TabBarColors.inactiveText(for: appearance)
-                        )
-                        .saturation(saturation)
+                    titleLabel
                 }
 
                 if showsZoomIndicator {
@@ -414,7 +411,19 @@ struct TabItemView: View {
 
     private var titleLineHeight: CGFloat {
         let font = NSFont.systemFont(ofSize: appearance.tabTitleFontSize)
-        return max(16, ceil(font.boundingRectForFont.height))
+        return max(1, ceil(font.boundingRectForFont.height))
+    }
+
+    private var titleLabel: some View {
+        Text(tab.title)
+            .font(.system(size: appearance.tabTitleFontSize))
+            .lineLimit(1)
+            .foregroundStyle(
+                isSelected
+                    ? TabBarColors.activeText(for: appearance)
+                    : TabBarColors.inactiveText(for: appearance)
+            )
+            .saturation(saturation)
     }
 
     private func shortcutHintWidth(for label: String) -> CGFloat {
