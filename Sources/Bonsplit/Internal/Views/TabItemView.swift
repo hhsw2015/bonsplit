@@ -54,6 +54,57 @@ private struct InlineTabRenameField: NSViewRepresentable {
 
     fileprivate final class InlineRenameTextField: NSTextField {}
 
+    fileprivate final class InlineRenameTextFieldCell: NSTextFieldCell {
+        override func drawingRect(forBounds rect: NSRect) -> NSRect {
+            textRect(forBounds: rect)
+        }
+
+        override func edit(
+            withFrame rect: NSRect,
+            in controlView: NSView,
+            editor textObj: NSText,
+            delegate: Any?,
+            event: NSEvent?
+        ) {
+            super.edit(
+                withFrame: textRect(forBounds: rect),
+                in: controlView,
+                editor: textObj,
+                delegate: delegate,
+                event: event
+            )
+        }
+
+        override func select(
+            withFrame rect: NSRect,
+            in controlView: NSView,
+            editor textObj: NSText,
+            delegate: Any?,
+            start selStart: Int,
+            length selLength: Int
+        ) {
+            super.select(
+                withFrame: textRect(forBounds: rect),
+                in: controlView,
+                editor: textObj,
+                delegate: delegate,
+                start: selStart,
+                length: selLength
+            )
+        }
+
+        private func textRect(forBounds rect: NSRect) -> NSRect {
+            guard let font else {
+                let fallback = super.drawingRect(forBounds: rect)
+                return NSRect(x: rect.minX, y: fallback.minY, width: rect.width, height: fallback.height)
+            }
+
+            let lineHeight = min(max(1, ceil(font.boundingRectForFont.height)), max(1, rect.height))
+            let lineY = rect.minY + floor((rect.height - lineHeight) / 2)
+            return NSRect(x: rect.minX, y: lineY, width: rect.width, height: lineHeight)
+        }
+    }
+
     fileprivate final class InlineRenameHostView: NSView {
         let field: InlineRenameTextField
         var contentHeight: CGFloat {
@@ -83,10 +134,7 @@ private struct InlineTabRenameField: NSViewRepresentable {
 
         override func layout() {
             super.layout()
-            let naturalFieldHeight = max(1, ceil(field.intrinsicContentSize.height))
-            let fieldHeight = min(naturalFieldHeight, max(1, bounds.height))
-            let fieldY = floor((bounds.height - fieldHeight) / 2)
-            field.frame = NSRect(x: 0, y: fieldY, width: bounds.width, height: fieldHeight)
+            field.frame = bounds
         }
 
         override func viewDidMoveToWindow() {
@@ -181,7 +229,9 @@ private struct InlineTabRenameField: NSViewRepresentable {
     }
 
     fileprivate func makeNSView(context: Context) -> InlineRenameHostView {
-        let field = InlineRenameTextField(string: initialTitle)
+        let field = InlineRenameTextField(frame: .zero)
+        field.cell = InlineRenameTextFieldCell(textCell: initialTitle)
+        field.stringValue = initialTitle
         field.delegate = context.coordinator
         field.isBordered = false
         field.isBezeled = false
@@ -201,6 +251,11 @@ private struct InlineTabRenameField: NSViewRepresentable {
             guard !coordinator.didFinish else { return }
             coordinator.attach(to: field)
             field.selectText(nil)
+            if let fieldEditor = field.currentEditor() as? NSTextView {
+                fieldEditor.textContainerInset = .zero
+                fieldEditor.textContainer?.lineFragmentPadding = 0
+                fieldEditor.font = field.font
+            }
         }
 
         return host
