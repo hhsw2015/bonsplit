@@ -48,7 +48,9 @@ enum TabItemStyling {
 private struct InlineTabRenameField: NSViewRepresentable {
     let initialTitle: String
     let fontSize: CGFloat
+    let textColor: NSColor
     let height: CGFloat
+    let onTextChange: (String) -> Void
     let onCommit: (String) -> Void
     let onCancel: () -> Void
 
@@ -165,6 +167,20 @@ private struct InlineTabRenameField: NSViewRepresentable {
 
         func attach(to field: NSTextField) {
             installOutsideClickMonitor(for: field)
+            configureFieldEditor(for: field)
+        }
+
+        func configureFieldEditor(for field: NSTextField) {
+            guard let fieldEditor = field.currentEditor() as? NSTextView else { return }
+            fieldEditor.textContainerInset = .zero
+            fieldEditor.textContainer?.lineFragmentPadding = 0
+            fieldEditor.font = field.font
+            fieldEditor.textColor = .clear
+            fieldEditor.insertionPointColor = parent.textColor
+            fieldEditor.selectedTextAttributes = [
+                .foregroundColor: NSColor.clear,
+                .backgroundColor: NSColor.clear,
+            ]
         }
 
         func finishCommit(_ title: String) {
@@ -184,6 +200,12 @@ private struct InlineTabRenameField: NSViewRepresentable {
         func controlTextDidEndEditing(_ obj: Notification) {
             guard let field = obj.object as? NSTextField else { return }
             finishCommit(field.stringValue)
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            parent.onTextChange(field.stringValue)
+            configureFieldEditor(for: field)
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -241,6 +263,7 @@ private struct InlineTabRenameField: NSViewRepresentable {
         field.drawsBackground = false
         field.focusRingType = .none
         field.font = .systemFont(ofSize: fontSize)
+        field.textColor = .clear
         field.lineBreakMode = .byTruncatingTail
         field.cell?.usesSingleLineMode = true
         field.cell?.wraps = false
@@ -254,11 +277,7 @@ private struct InlineTabRenameField: NSViewRepresentable {
             guard !coordinator.didFinish else { return }
             coordinator.attach(to: field)
             field.selectText(nil)
-            if let fieldEditor = field.currentEditor() as? NSTextView {
-                fieldEditor.textContainerInset = .zero
-                fieldEditor.textContainer?.lineFragmentPadding = 0
-                fieldEditor.font = field.font
-            }
+            coordinator.configureFieldEditor(for: field)
         }
 
         return host
@@ -268,7 +287,9 @@ private struct InlineTabRenameField: NSViewRepresentable {
         context.coordinator.parent = self
         let field = host.field
         field.font = .systemFont(ofSize: fontSize)
+        field.textColor = .clear
         host.contentHeight = height
+        context.coordinator.configureFieldEditor(for: field)
         if field.currentEditor() == nil, field.stringValue != initialTitle {
             field.stringValue = initialTitle
         }
@@ -307,6 +328,7 @@ struct TabItemView: View {
     @State private var lastLoadingStoppedAt: Date?
     @State private var renderedFaviconData: Data?
     @State private var renderedFaviconImage: NSImage?
+    @State private var inlineRenameDraftTitle: String?
     @AppStorage(TabControlShortcutHintDebugSettings.xKey) private var controlShortcutHintXOffset = TabControlShortcutHintDebugSettings.defaultX
     @AppStorage(TabControlShortcutHintDebugSettings.yKey) private var controlShortcutHintYOffset = TabControlShortcutHintDebugSettings.defaultY
     @AppStorage(TabControlShortcutHintDebugSettings.alwaysShowKey) private var alwaysShowShortcutHints = TabControlShortcutHintDebugSettings.defaultAlwaysShow
@@ -367,17 +389,30 @@ struct TabItemView: View {
 
                 if isInlineRenaming {
                     titleLabel
-                        .hidden()
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .overlay(alignment: .leading) {
                             InlineTabRenameField(
-                                initialTitle: tab.title,
+                                initialTitle: inlineRenameDraftTitle ?? tab.title,
                                 fontSize: appearance.tabTitleFontSize,
+                                textColor: titleTextNSColor,
                                 height: titleLineHeight,
-                                onCommit: onInlineRenameCommit,
-                                onCancel: onInlineRenameCancel
+                                onTextChange: { inlineRenameDraftTitle = $0 },
+                                onCommit: { title in
+                                    inlineRenameDraftTitle = nil
+                                    onInlineRenameCommit(title)
+                                },
+                                onCancel: {
+                                    inlineRenameDraftTitle = nil
+                                    onInlineRenameCancel()
+                                }
                             )
                             .frame(minWidth: 44, maxWidth: .infinity, minHeight: titleLineHeight, maxHeight: titleLineHeight)
+                        }
+                        .onAppear {
+                            inlineRenameDraftTitle = tab.title
+                        }
+                        .onDisappear {
+                            inlineRenameDraftTitle = nil
                         }
                         .layoutPriority(1)
                 } else {
@@ -503,15 +538,30 @@ struct TabItemView: View {
         return max(1, ceil(font.boundingRectForFont.height))
     }
 
+    private var displayedTitle: String {
+        if isInlineRenaming {
+            return inlineRenameDraftTitle ?? tab.title
+        }
+        return tab.title
+    }
+
+    private var titleTextColor: Color {
+        isSelected
+            ? TabBarColors.activeText(for: appearance)
+            : TabBarColors.inactiveText(for: appearance)
+    }
+
+    private var titleTextNSColor: NSColor {
+        isSelected
+            ? TabBarColors.nsColorActiveText(for: appearance)
+            : TabBarColors.nsColorInactiveText(for: appearance)
+    }
+
     private var titleLabel: some View {
-        Text(tab.title)
+        Text(displayedTitle)
             .font(.system(size: appearance.tabTitleFontSize))
             .lineLimit(1)
-            .foregroundStyle(
-                isSelected
-                    ? TabBarColors.activeText(for: appearance)
-                    : TabBarColors.inactiveText(for: appearance)
-            )
+            .foregroundStyle(titleTextColor)
             .saturation(saturation)
     }
 
