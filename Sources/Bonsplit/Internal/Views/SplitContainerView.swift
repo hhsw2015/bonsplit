@@ -849,7 +849,18 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                 // Only update the model when the user is actively dragging. For other resizes
                 // (window resizes, view reparenting, pane↔split structural updates), the model's
                 // dividerPosition should remain stable; syncPosition() will keep the view aligned.
-                guard wasDragging else {
+                //
+                // wasDragging requires the Coordinator's mousedown hitTest at line 763 to have
+                // succeeded — which fails when NSApp.currentEvent is stale (>100ms) or when the
+                // arranged subview frames are still 0-sized at the moment of hitTest. NSSplitView
+                // can drag the divider visually without the hitTest setting isDragging, leaving
+                // the model stuck at the pre-drag value while the user sees the divider move.
+                // Fall back to the OS's "left mouse button is currently pressed" signal: if it's
+                // down and we're not in a programmatic-sync window, treat the resize as a real
+                // user drag and let the model write through.
+                let leftButtonHeld = (NSEvent.pressedMouseButtons & 1) != 0
+                let userResize = wasDragging || (leftButtonHeld && !isSyncingProgrammatically)
+                guard userResize else {
 #if DEBUG
                     let eventType = NSApp.currentEvent.map { String(describing: $0.type) } ?? "none"
                     dlog(
@@ -876,8 +887,9 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
 #endif
                 self.splitState.dividerPosition = normalizedPosition
                 self.lastAppliedPosition = normalizedPosition
-                // Notify geometry change with drag state
-                self.onGeometryChange?(wasDragging)
+                // Notify geometry change with drag state. Treat "left button
+                // held" as drag for the same reason as the userResize fallback.
+                self.onGeometryChange?(wasDragging || leftButtonHeld)
             }
         }
 
