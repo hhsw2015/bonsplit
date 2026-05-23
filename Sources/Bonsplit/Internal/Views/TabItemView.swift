@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuartzCore
 
 enum TabControlShortcutHintAnimation {
     static let visibility: Animation = .easeOut(duration: 0.12)
@@ -69,9 +70,11 @@ struct TabItemView: View {
     let allowsShortcutHints: Bool
     let showsControlShortcutHint: Bool
     let shortcutModifierSymbol: String
+    let allowsClose: Bool
     let contextMenuState: TabContextMenuState
+    let moveDestinationsProvider: () -> [TabContextMoveDestination]
     let onSelect: () -> Void
-    let onClose: () -> Void
+    let onClose: (TabCloseRequestSource) -> Void
     let onZoomToggle: () -> Void
     let onContextAction: (TabContextAction) -> Void
     let onMoveDestination: (String) -> Void
@@ -94,15 +97,16 @@ struct TabItemView: View {
             // Icon + title block uses the standard spacing, but keep the close affordance tight.
             HStack(spacing: TabBarMetrics.contentSpacing) {
                 let iconSlotSize = TabBarMetrics.iconSize
-                let iconTint = isSelected
-                    ? TabBarColors.activeText(for: appearance)
-                    : TabBarColors.inactiveText(for: appearance)
+                let iconTintColor = isSelected
+                    ? TabBarColors.nsColorActiveText(for: appearance)
+                    : TabBarColors.nsColorInactiveText(for: appearance)
+                let iconTint = Color(nsColor: iconTintColor)
                 let faviconImage = renderedFaviconImage ?? tab.iconImageData.flatMap { NSImage(data: $0) }
 
                 Group {
                     if tab.isLoading {
                         // Slightly smaller than the icon slot so it reads cleaner at tab scale.
-                        TabLoadingSpinner(size: iconSlotSize * 0.86, color: iconTint)
+                        TabLoadingSpinner(size: iconSlotSize * 0.86, color: iconTintColor)
                     } else if let image = faviconImage {
                         FaviconIconView(image: image)
                             .frame(width: iconSlotSize, height: iconSlotSize, alignment: .center)
@@ -204,11 +208,15 @@ struct TabItemView: View {
         // Middle click to close (macOS convention).
         // Uses an AppKit event monitor so it doesn't interfere with left click selection or drag/reorder.
         .background(MiddleClickMonitorView(onMiddleClick: {
-            guard !tab.isPinned else { return }
-            onClose()
+            guard allowsClose, !tab.isPinned else { return }
+            onClose(.middleClick)
         }))
         .background(TabContextMenuPresenter(
-            snapshot: TabContextMenuSnapshot(tabId: tab.id, state: contextMenuState),
+            snapshot: TabContextMenuSnapshot(
+                tabId: tab.id,
+                state: contextMenuState,
+                moveDestinationsProvider: moveDestinationsProvider
+            ),
             onContextAction: onContextAction,
             onMoveDestination: onMoveDestination
         ))
@@ -429,10 +437,10 @@ struct TabItemView: View {
                         .frame(width: accessorySlotSize, height: accessorySlotSize)
                         .saturation(saturation)
                 }
-            } else if isSelected || isHovered || isCloseHovered {
+            } else if allowsClose && (isSelected || isHovered || isCloseHovered) {
                 // Close button (always visible on active tab, shown on hover for others)
                 Button {
-                    onClose()
+                    onClose(.closeButton)
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: TabBarMetrics.closeIconSize, weight: .semibold))
@@ -465,30 +473,169 @@ struct TabItemView: View {
     }
 }
 
-private struct TabLoadingSpinner: View {
+private struct TabLoadingSpinner: NSViewRepresentable {
     let size: CGFloat
-    let color: Color
+    let color: NSColor
 
-    var body: some View {
-        TimelineView(.animation) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            // 0.9s per revolution feels a bit snappier at tab-icon scale.
-            let angle = (t.truncatingRemainder(dividingBy: 0.9) / 0.9) * 360.0
+    func makeNSView(context: Context) -> TabLoadingSpinnerLayerView {
+        let view = TabLoadingSpinnerLayerView(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        view.configure(size: size, color: color)
+        return view
+    }
 
-            ZStack {
-                Circle()
-                    .stroke(color.opacity(0.20), lineWidth: ringWidth)
-                Circle()
-                    .trim(from: 0.0, to: 0.28)
-                    .stroke(color, style: StrokeStyle(lineWidth: ringWidth, lineCap: .round))
-                    .rotationEffect(.degrees(angle))
-            }
-            .frame(width: size, height: size)
+    func updateNSView(_ nsView: TabLoadingSpinnerLayerView, context: Context) {
+        nsView.configure(size: size, color: color)
+    }
+}
+
+final class TabLoadingSpinnerLayerView: NSView {
+    static let rotationAnimationKey = "tabLoadingSpinnerRotation"
+    static let rotationDuration: CFTimeInterval = 0.9
+    private static let arcStrokeEnd: CGFloat = 0.28
+
+    private let trackLayer = CAShapeLayer()
+    private let arcContainerLayer = CALayer()
+    private let arcLayer = CAShapeLayer()
+    private var spinnerSize: CGFloat = 0
+    private var spinnerColor: NSColor = .labelColor
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        setupLayers()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: spinnerSize, height: spinnerSize)
+    }
+
+    func configure(size: CGFloat, color: NSColor) {
+        let resolvedSize = max(1, size)
+        let sizeChanged = abs(spinnerSize - resolvedSize) > 0.001
+        spinnerSize = resolvedSize
+        spinnerColor = color
+
+        updateColors()
+        updateGeometry()
+
+        if sizeChanged {
+            invalidateIntrinsicContentSize()
+        }
+        if window != nil {
+            startAnimating()
         }
     }
 
-    private var ringWidth: CGFloat {
-        max(1.6, size * 0.14)
+    override func layout() {
+        super.layout()
+        updateGeometry()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            stopAnimating()
+        } else {
+            startAnimating()
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    private func setupLayers() {
+        guard let layer else { return }
+        layer.masksToBounds = false
+
+        trackLayer.fillColor = nil
+        arcLayer.fillColor = nil
+        arcLayer.strokeStart = 0
+        arcLayer.strokeEnd = Self.arcStrokeEnd
+        arcLayer.lineCap = .round
+
+        arcContainerLayer.addSublayer(arcLayer)
+        layer.addSublayer(trackLayer)
+        layer.addSublayer(arcContainerLayer)
+    }
+
+    private func updateGeometry() {
+        let diameter = max(1, min(spinnerSize, bounds.width, bounds.height))
+        let frame = CGRect(
+            x: (bounds.width - diameter) * 0.5,
+            y: (bounds.height - diameter) * 0.5,
+            width: diameter,
+            height: diameter
+        )
+        let lineWidth = max(1.6, spinnerSize * 0.14)
+        let pathRect = CGRect(origin: .zero, size: frame.size).insetBy(dx: lineWidth * 0.5, dy: lineWidth * 0.5)
+        let path = CGPath(ellipseIn: pathRect, transform: nil)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        trackLayer.frame = frame
+        trackLayer.lineWidth = lineWidth
+        trackLayer.path = path
+        arcContainerLayer.frame = frame
+        arcLayer.frame = CGRect(origin: .zero, size: frame.size)
+        arcLayer.lineWidth = lineWidth
+        arcLayer.path = path
+        CATransaction.commit()
+    }
+
+    private func updateColors() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        trackLayer.strokeColor = resolvedCGColor(spinnerColor, alphaMultiplier: 0.20)
+        arcLayer.strokeColor = resolvedCGColor(spinnerColor, alphaMultiplier: 1.0)
+        CATransaction.commit()
+    }
+
+    private func resolvedCGColor(_ color: NSColor, alphaMultiplier: CGFloat) -> CGColor {
+        var resolved = color
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            resolved = color.usingColorSpace(NSColorSpace.sRGB) ?? color
+        }
+        let alpha = resolved.alphaComponent * alphaMultiplier
+        return resolved.withAlphaComponent(alpha).cgColor
+    }
+
+    private func startAnimating() {
+        guard arcContainerLayer.animation(forKey: Self.rotationAnimationKey) == nil else { return }
+        let animation = CABasicAnimation(keyPath: "transform.rotation.z")
+        animation.fromValue = 0
+        animation.toValue = CGFloat.pi * 2
+        animation.duration = Self.rotationDuration
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .linear)
+        animation.isRemovedOnCompletion = false
+        arcContainerLayer.add(animation, forKey: Self.rotationAnimationKey)
+    }
+
+    private func stopAnimating() {
+        arcContainerLayer.removeAnimation(forKey: Self.rotationAnimationKey)
+    }
+
+    var activeRotationAnimationForTesting: CAAnimation? {
+        arcContainerLayer.animation(forKey: Self.rotationAnimationKey)
+    }
+
+    var arcStrokeEndForTesting: CGFloat {
+        arcLayer.strokeEnd
+    }
+
+    var ringWidthForTesting: CGFloat {
+        arcLayer.lineWidth
+    }
+
+    var arcStrokeColorForTesting: CGColor? {
+        arcLayer.strokeColor
     }
 }
 
@@ -589,6 +736,7 @@ private struct MiddleClickMonitorView: NSViewRepresentable {
 struct TabContextMenuSnapshot {
     let tabId: UUID
     let state: TabContextMenuState
+    let moveDestinationsProvider: () -> [TabContextMoveDestination]
 }
 
 final class TabContextMenuActionTarget: NSObject {
@@ -663,7 +811,7 @@ enum TabContextMenuBuilder {
             to: menu
         )
 
-        menu.addItem(moveSubmenuItem(state: state, target: target))
+        menu.addItem(moveSubmenuItem(snapshot: snapshot, target: target))
 
         if state.isTerminal {
             addAction(
@@ -777,9 +925,11 @@ enum TabContextMenuBuilder {
     }
 
     private static func moveSubmenuItem(
-        state: TabContextMenuState,
+        snapshot: TabContextMenuSnapshot,
         target: TabContextMenuActionTarget
     ) -> NSMenuItem {
+        let state = snapshot.state
+        let moveDestinations = snapshot.moveDestinationsProvider()
         let item = NSMenuItem(
             title: localized("tabContext.moveTab", defaultValue: "Move Tab"),
             action: nil,
@@ -795,7 +945,7 @@ enum TabContextMenuBuilder {
             target: target,
             to: submenu
         )
-        for destination in state.moveDestinations {
+        for destination in moveDestinations {
             let destinationItem = NSMenuItem(
                 title: destination.title,
                 action: #selector(TabContextMenuActionTarget.performMoveDestination(_:)),
@@ -807,7 +957,7 @@ enum TabContextMenuBuilder {
             submenu.addItem(destinationItem)
         }
         item.submenu = submenu
-        item.isEnabled = state.canMoveToNewWorkspace || !state.moveDestinations.isEmpty
+        item.isEnabled = state.canMoveToNewWorkspace || !moveDestinations.isEmpty
         return item
     }
 

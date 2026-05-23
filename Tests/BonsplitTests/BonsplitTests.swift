@@ -1,6 +1,7 @@
 import XCTest
 @testable import Bonsplit
 import AppKit
+import QuartzCore
 import SwiftUI
 
 final class BonsplitTests: XCTestCase {
@@ -1559,16 +1560,24 @@ final class BonsplitTests: XCTestCase {
             canMoveToRightPane: true,
             isZoomed: false,
             hasSplits: true,
-            moveDestinations: [
-                TabContextMoveDestination(id: "workspace:abc", title: "Workspace A", isEnabled: false)
-            ],
             shortcuts: [:]
         )
-        let snapshot = TabContextMenuSnapshot(tabId: UUID(), state: state)
+        var moveDestinationRequestCount = 0
+        let snapshot = TabContextMenuSnapshot(
+            tabId: UUID(),
+            state: state,
+            moveDestinationsProvider: {
+                moveDestinationRequestCount += 1
+                return [
+                    TabContextMoveDestination(id: "workspace:abc", title: "Workspace A", isEnabled: false)
+                ]
+            }
+        )
 
         let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
         let moveItem = menu.items.first { $0.title == "Move Tab" }
 
+        XCTAssertEqual(moveDestinationRequestCount, 1)
         XCTAssertNotNil(moveItem)
         XCTAssertTrue(moveItem?.isEnabled ?? false)
         XCTAssertEqual(moveItem?.submenu?.items.map(\.title), ["Move Tab to New Workspace", "Workspace A"])
@@ -1820,6 +1829,90 @@ final class BonsplitTests: XCTestCase {
         let existing = NSImage(size: NSSize(width: 16, height: 16))
         let resolved = TabItemStyling.resolvedFaviconImage(existing: existing, incomingData: nil)
         XCTAssertNil(resolved)
+    }
+
+    @MainActor
+    func testLoadingSpinnerUsesCoreAnimationRotationLayer() throws {
+        let spinner = TabLoadingSpinnerLayerView(frame: NSRect(x: 4, y: 4, width: 12, height: 12))
+        spinner.configure(size: 12, color: .labelColor)
+
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
+        let window = NSWindow(
+            contentRect: contentView.bounds,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = contentView
+        contentView.addSubview(spinner)
+        contentView.layoutSubtreeIfNeeded()
+        spinner.layoutSubtreeIfNeeded()
+
+        try withExtendedLifetime(window) {
+            let animation = try XCTUnwrap(
+                spinner.activeRotationAnimationForTesting as? CABasicAnimation
+            )
+            XCTAssertEqual(animation.keyPath, "transform.rotation.z")
+            XCTAssertEqual(animation.duration, TabLoadingSpinnerLayerView.rotationDuration, accuracy: 0.001)
+            XCTAssertEqual(animation.repeatCount, .infinity)
+            XCTAssertFalse(animation.isRemovedOnCompletion)
+            XCTAssertEqual(spinner.arcStrokeEndForTesting, 0.28, accuracy: 0.001)
+            XCTAssertEqual(spinner.ringWidthForTesting, max(1.6, 12 * 0.14), accuracy: 0.001)
+        }
+    }
+
+    @MainActor
+    func testLoadingSpinnerResolvesDynamicColorWithEffectiveAppearance() throws {
+        let previousAppearance = NSApplication.shared.appearance
+        NSApplication.shared.appearance = NSAppearance(named: .aqua)
+        defer { NSApplication.shared.appearance = previousAppearance }
+
+        let spinner = TabLoadingSpinnerLayerView(frame: NSRect(x: 4, y: 4, width: 12, height: 12))
+        spinner.configure(size: 12, color: .labelColor)
+
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
+        let window = NSWindow(
+            contentRect: contentView.bounds,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = contentView
+        contentView.addSubview(spinner)
+        contentView.layoutSubtreeIfNeeded()
+        spinner.layoutSubtreeIfNeeded()
+
+        try withExtendedLifetime(window) {
+            let cgColor = try XCTUnwrap(spinner.arcStrokeColorForTesting)
+            let color = try XCTUnwrap(NSColor(cgColor: cgColor)?.usingColorSpace(.sRGB))
+            XCTAssertGreaterThan(color.redComponent, 0.9)
+            XCTAssertGreaterThan(color.greenComponent, 0.9)
+            XCTAssertGreaterThan(color.blueComponent, 0.9)
+        }
+    }
+
+    @MainActor
+    func testLoadingSpinnerStopsCoreAnimationWhenRemovedFromWindow() throws {
+        let spinner = TabLoadingSpinnerLayerView(frame: NSRect(x: 4, y: 4, width: 12, height: 12))
+        spinner.configure(size: 12, color: .labelColor)
+
+        let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
+        let window = NSWindow(
+            contentRect: contentView.bounds,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = contentView
+        contentView.addSubview(spinner)
+
+        withExtendedLifetime(window) {
+            XCTAssertNotNil(spinner.activeRotationAnimationForTesting)
+
+            spinner.removeFromSuperview()
+            XCTAssertNil(spinner.activeRotationAnimationForTesting)
+        }
     }
 
     func testTabControlShortcutHintPolicyMatchesConfiguredModifiers() {

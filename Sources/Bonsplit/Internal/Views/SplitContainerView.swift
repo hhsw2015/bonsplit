@@ -241,8 +241,9 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
             context.coordinator.initialDividerApplyAttempts = 0
 
             if animationOrigin != nil {
-                let targetPosition = availableSize * 0.5
-                splitState.dividerPosition = 0.5
+                let targetDividerPosition = min(max(splitState.dividerPosition, 0.1), 0.9)
+                let targetPosition = availableSize * targetDividerPosition
+                splitState.dividerPosition = targetDividerPosition
 
                 if shouldAnimate {
                     // Position at edge while new pane is hidden
@@ -269,9 +270,9 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                             duration: duration
                         ) {
                             context.coordinator.isAnimating = false
-                            // Re-assert exact 0.5 ratio to prevent pixel-rounding drift
-                            splitState.dividerPosition = 0.5
-                            context.coordinator.lastAppliedPosition = 0.5
+                            // Re-assert the target ratio to prevent pixel-rounding drift.
+                            splitState.dividerPosition = targetDividerPosition
+                            context.coordinator.lastAppliedPosition = targetDividerPosition
 #if DEBUG
                             dlog(
                                 "split.entry.complete split=\(splitDebugToken) orientation=\(orientationToken) " +
@@ -283,6 +284,7 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                 } else {
                     // No animation - just set the position immediately
                     context.coordinator.setPositionSafely(targetPosition, in: splitView, layout: false)
+                    context.coordinator.lastAppliedPosition = targetDividerPosition
 #if DEBUG
                     dlog(
                         "split.entry.noAnimation split=\(splitDebugToken) orientation=\(orientationToken) " +
