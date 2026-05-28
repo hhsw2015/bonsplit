@@ -1558,6 +1558,7 @@ final class BonsplitTests: XCTestCase {
             canMoveToNewWorkspace: true,
             canMoveToLeftPane: false,
             canMoveToRightPane: true,
+            canForkConversation: false,
             isZoomed: false,
             hasSplits: true,
             shortcuts: [:]
@@ -2257,6 +2258,30 @@ final class BonsplitTests: XCTestCase {
 
         XCTAssertGreaterThan(focusedSaturation, 0.4)
         XCTAssertLessThan(unfocusedSaturation, 0.1)
+    }
+
+    @MainActor
+    func testActiveTabIndicatorTracksSelectedTabAfterHorizontalScroll() {
+        let size = NSSize(width: 160, height: TabBarMetrics.barHeight)
+        let range = renderedSelectedIndicatorRangeAfterManualScroll(size: size)
+        XCTAssertNil(
+            range,
+            "Selected indicator should scroll with its tab and leave the visible lane when the selected tab is manually scrolled out of view."
+        )
+    }
+
+    @MainActor
+    func testActiveTabIndicatorIgnoresAnimatedSelectionTransactions() {
+        guard let range = renderedIndicatorRangeAfterAnimatedSelectionChange() else {
+            XCTFail("Expected rendered selected indicator after selection change")
+            return
+        }
+
+        XCTAssertGreaterThan(
+            range.lowerBound,
+            TabBarMetrics.tabMinWidth - 4,
+            "Selected indicator should jump to the new selected tab instead of animating from the previous tab frame."
+        )
     }
 
     @MainActor
@@ -3263,6 +3288,63 @@ final class BonsplitTests: XCTestCase {
     }
 
     @MainActor
+    private func renderedSelectedIndicatorRangeAfterManualScroll(size: NSSize) -> ClosedRange<CGFloat>? {
+        renderedTabBarValue(
+            isFocused: true,
+            size: size,
+            configurePane: { pane in
+                let tabs = (0..<8).map { index in
+                    TabItem(title: "Tab \(index)", icon: nil)
+                }
+                pane.tabs = tabs
+                pane.selectedTabId = tabs.first?.id
+            }
+        ) { hostingView in
+            guard let scrollView = firstDescendant(ofType: NSScrollView.self, in: hostingView) else {
+                XCTFail("Expected tab bar scroll view for manual scroll regression")
+                return nil
+            }
+            scrollView.contentView.scroll(to: NSPoint(x: 96, y: 0))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            hostingView.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            hostingView.layoutSubtreeIfNeeded()
+
+            let sampleRect = NSRect(x: 0, y: 0, width: size.width, height: 4)
+            return highSaturationRange(in: hostingView, sampleRect: sampleRect)
+        }
+    }
+
+    @MainActor
+    private func renderedIndicatorRangeAfterAnimatedSelectionChange() -> ClosedRange<CGFloat>? {
+        let first = TabItem(title: "First", icon: nil)
+        let second = TabItem(title: "Second", icon: nil)
+        let size = NSSize(width: 160, height: TabBarMetrics.barHeight)
+        var renderedPane: PaneState?
+
+        return renderedTabBarValue(
+            isFocused: true,
+            size: size,
+            configurePane: { pane in
+                renderedPane = pane
+                pane.tabs = [first, second]
+                pane.selectedTabId = first.id
+            }
+        ) { hostingView in
+            guard let renderedPane else { return nil }
+            withAnimation(.linear(duration: 10)) {
+                renderedPane.selectedTabId = second.id
+            }
+            hostingView.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            hostingView.layoutSubtreeIfNeeded()
+
+            let sampleRect = NSRect(x: 0, y: 0, width: size.width, height: 4)
+            return highSaturationRange(in: hostingView, sampleRect: sampleRect)
+        }
+    }
+
+    @MainActor
     private func renderedSplitButtonLaneTopSaturation() -> CGFloat? {
         let buttonCount = BonsplitConfiguration.SplitActionButton.defaults.count
         let size = NSSize(width: 240, height: 28)
@@ -4017,6 +4099,51 @@ final class BonsplitTests: XCTestCase {
             }
         }
         return CGFloat(activeColumnCount) / scaleX
+    }
+
+    @MainActor
+    private func highSaturationRange(in view: NSView, sampleRect: NSRect) -> ClosedRange<CGFloat>? {
+        let integralBounds = view.bounds.integral
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: integralBounds) else { return nil }
+        bitmap.size = integralBounds.size
+        view.cacheDisplay(in: integralBounds, to: bitmap)
+
+        let scaleX = CGFloat(bitmap.pixelsWide) / max(1, integralBounds.width)
+        let scaleY = CGFloat(bitmap.pixelsHigh) / max(1, integralBounds.height)
+        let minX = max(0, Int(floor(sampleRect.minX * scaleX)))
+        let maxX = min(bitmap.pixelsWide, Int(ceil(sampleRect.maxX * scaleX)))
+        let minY = max(0, Int(floor(sampleRect.minY * scaleY)))
+        let maxY = min(bitmap.pixelsHigh, Int(ceil(sampleRect.maxY * scaleY)))
+        var firstActiveX: Int?
+        var lastActiveX: Int?
+
+        for x in minX..<maxX {
+            var hasIndicatorPixel = false
+            for y in minY..<maxY {
+                guard let color = bitmap.colorAt(x: x, y: y),
+                      let rgb = color.usingColorSpace(.sRGB),
+                      rgb.alphaComponent > 0.05 else { continue }
+                let alpha = min(max(rgb.alphaComponent, 0), 1)
+                let red = rgb.redComponent * alpha
+                let green = rgb.greenComponent * alpha
+                let blue = rgb.blueComponent * alpha
+                let high = max(red, green, blue)
+                guard high > 0.01 else { continue }
+                let low = min(red, green, blue)
+                if (high - low) / high > 0.4 {
+                    hasIndicatorPixel = true
+                    break
+                }
+            }
+            guard hasIndicatorPixel else { continue }
+            if firstActiveX == nil {
+                firstActiveX = x
+            }
+            lastActiveX = x
+        }
+
+        guard let firstActiveX, let lastActiveX else { return nil }
+        return (CGFloat(firstActiveX) / scaleX)...(CGFloat(lastActiveX + 1) / scaleX)
     }
 
     @MainActor
