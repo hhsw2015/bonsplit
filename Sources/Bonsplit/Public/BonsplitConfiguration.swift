@@ -32,12 +32,19 @@ public enum TabBarVisibility: Sendable, Equatable {
     /// Show the pane tab bar only when there are multiple tabs to switch between.
     case multipleTabs
 
+    /// Never show the pane tab bar, regardless of tab count. Useful for hosts
+    /// that want to drive tab visibility entirely from the outside (e.g. a
+    /// hover-revealed wrapper that toggles between `.never` and `.always`).
+    case never
+
     public func showsTabBar(tabCount: Int) -> Bool {
         switch self {
         case .always:
             return true
         case .multipleTabs:
             return tabCount >= 2
+        case .never:
+            return false
         }
     }
 }
