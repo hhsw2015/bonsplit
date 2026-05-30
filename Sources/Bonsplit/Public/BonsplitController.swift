@@ -119,6 +119,7 @@ public final class BonsplitController {
     ///   - isDirty: Whether the tab shows a dirty indicator
     ///   - showsNotificationBadge: Whether the tab shows an "unread/activity" badge
     ///   - isLoading: Whether the tab shows an activity/loading indicator (e.g. spinning icon)
+    ///   - isAudioMuted: Whether the tab shows browser audio as muted
     ///   - isPinned: Whether the tab should be treated as pinned
     ///   - pane: Optional pane to add the tab to (defaults to focused pane)
     /// - Returns: The TabID of the created tab, or nil if creation was vetoed by delegate
@@ -132,6 +133,7 @@ public final class BonsplitController {
         isDirty: Bool = false,
         showsNotificationBadge: Bool = false,
         isLoading: Bool = false,
+        isAudioMuted: Bool = false,
         isPinned: Bool = false,
         inPane pane: PaneID? = nil
     ) -> TabID? {
@@ -146,6 +148,7 @@ public final class BonsplitController {
             isDirty: isDirty,
             showsNotificationBadge: showsNotificationBadge,
             isLoading: isLoading,
+            isAudioMuted: isAudioMuted,
             isPinned: isPinned
         )
         let targetPane = pane ?? focusedPaneId ?? PaneID(id: internalController.rootNode.allPaneIds.first!.id)
@@ -183,6 +186,7 @@ public final class BonsplitController {
             isDirty: isDirty,
             showsNotificationBadge: showsNotificationBadge,
             isLoading: isLoading,
+            isAudioMuted: isAudioMuted,
             isPinned: isPinned
         )
         internalController.addTab(tabItem, toPane: PaneID(id: targetPane.id), atIndex: insertIndex)
@@ -227,6 +231,7 @@ public final class BonsplitController {
     ///   - isDirty: New dirty state (pass nil to keep current)
     ///   - showsNotificationBadge: New badge state (pass nil to keep current)
     ///   - isLoading: New loading/busy state (pass nil to keep current)
+    ///   - isAudioMuted: New browser-audio mute state (pass nil to keep current)
     ///   - isPinned: New pinned state (pass nil to keep current)
     public func updateTab(
         _ tabId: TabID,
@@ -238,6 +243,7 @@ public final class BonsplitController {
         isDirty: Bool? = nil,
         showsNotificationBadge: Bool? = nil,
         isLoading: Bool? = nil,
+        isAudioMuted: Bool? = nil,
         isPinned: Bool? = nil
     ) {
         guard let (pane, tabIndex) = findTabInternal(tabId) else { return }
@@ -265,6 +271,9 @@ public final class BonsplitController {
         }
         if let isLoading = isLoading {
             pane.tabs[tabIndex].isLoading = isLoading
+        }
+        if let isAudioMuted = isAudioMuted {
+            pane.tabs[tabIndex].isAudioMuted = isAudioMuted
         }
         if let isPinned = isPinned {
             pane.tabs[tabIndex].isPinned = isPinned
@@ -432,6 +441,7 @@ public final class BonsplitController {
                 isDirty: tab.isDirty,
                 showsNotificationBadge: tab.showsNotificationBadge,
                 isLoading: tab.isLoading,
+                isAudioMuted: tab.isAudioMuted,
                 isPinned: tab.isPinned
             )
         } else {
@@ -496,6 +506,7 @@ public final class BonsplitController {
             isDirty: tab.isDirty,
             showsNotificationBadge: tab.showsNotificationBadge,
             isLoading: tab.isLoading,
+            isAudioMuted: tab.isAudioMuted,
             isPinned: tab.isPinned
         )
 

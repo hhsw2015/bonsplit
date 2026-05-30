@@ -157,6 +157,19 @@ struct TabItemView: View {
                     )
                     .saturation(saturation)
 
+                if tab.isAudioMuted {
+                    Image(systemName: "speaker.slash")
+                        .font(.system(size: accessoryFontSize, weight: .semibold))
+                        .foregroundStyle(
+                            (isSelected
+                                ? TabBarColors.activeText(for: appearance)
+                                : TabBarColors.inactiveText(for: appearance))
+                                .opacity(0.78)
+                        )
+                        .saturation(saturation)
+                        .accessibilityHidden(true)
+                }
+
                 if showsZoomIndicator {
                     Button {
                         onZoomToggle()
@@ -377,6 +390,9 @@ struct TabItemView: View {
         if tab.isPinned { parts.append("Pinned") }
         if tab.showsNotificationBadge { parts.append("Unread") }
         if tab.isDirty { parts.append("Modified") }
+        if tab.isAudioMuted {
+            parts.append(Bundle.module.localizedString(forKey: "tabContext.audioMutedAccessibility", value: "Muted", table: nil))
+        }
         if showsZoomIndicator { parts.append("Zoomed") }
         return parts.joined(separator: ", ")
     }
@@ -863,6 +879,15 @@ enum TabContextMenuBuilder {
 
         if state.isBrowser {
             menu.addItem(.separator())
+            addAction(
+                title: state.isAudioMuted
+                    ? localized("tabContext.unmuteTab", defaultValue: "Unmute Tab")
+                    : localized("tabContext.muteTab", defaultValue: "Mute Tab"),
+                action: .toggleAudioMute,
+                state: state,
+                target: target,
+                to: menu
+            )
             addAction(
                 title: localized("tabContext.reloadTab", defaultValue: "Reload Tab"),
                 action: .reload,

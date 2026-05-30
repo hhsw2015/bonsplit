@@ -15,6 +15,8 @@ public struct Tab: Identifiable, Hashable, Sendable {
     public let showsNotificationBadge: Bool
     /// Whether the tab should show an activity/loading indicator (e.g. spinning icon).
     public let isLoading: Bool
+    /// Whether the tab should show browser audio as muted.
+    public let isAudioMuted: Bool
     /// Whether the tab is pinned in its pane.
     public let isPinned: Bool
 
@@ -28,6 +30,7 @@ public struct Tab: Identifiable, Hashable, Sendable {
         isDirty: Bool = false,
         showsNotificationBadge: Bool = false,
         isLoading: Bool = false,
+        isAudioMuted: Bool = false,
         isPinned: Bool = false
     ) {
         self.id = id
@@ -39,6 +42,7 @@ public struct Tab: Identifiable, Hashable, Sendable {
         self.isDirty = isDirty
         self.showsNotificationBadge = showsNotificationBadge
         self.isLoading = isLoading
+        self.isAudioMuted = isAudioMuted
         self.isPinned = isPinned
     }
 
@@ -52,6 +56,7 @@ public struct Tab: Identifiable, Hashable, Sendable {
         self.isDirty = tabItem.isDirty
         self.showsNotificationBadge = tabItem.showsNotificationBadge
         self.isLoading = tabItem.isLoading
+        self.isAudioMuted = tabItem.isAudioMuted
         self.isPinned = tabItem.isPinned
     }
 }

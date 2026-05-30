@@ -24,6 +24,7 @@ struct TabItem: Identifiable, Hashable, Codable {
     var isDirty: Bool
     var showsNotificationBadge: Bool
     var isLoading: Bool
+    var isAudioMuted: Bool
     var isPinned: Bool
 
     init(
@@ -36,6 +37,7 @@ struct TabItem: Identifiable, Hashable, Codable {
         isDirty: Bool = false,
         showsNotificationBadge: Bool = false,
         isLoading: Bool = false,
+        isAudioMuted: Bool = false,
         isPinned: Bool = false
     ) {
         self.id = id
@@ -47,6 +49,7 @@ struct TabItem: Identifiable, Hashable, Codable {
         self.isDirty = isDirty
         self.showsNotificationBadge = showsNotificationBadge
         self.isLoading = isLoading
+        self.isAudioMuted = isAudioMuted
         self.isPinned = isPinned
     }
 
@@ -68,6 +71,7 @@ struct TabItem: Identifiable, Hashable, Codable {
         case isDirty
         case showsNotificationBadge
         case isLoading
+        case isAudioMuted
         case isPinned
     }
 
@@ -82,6 +86,7 @@ struct TabItem: Identifiable, Hashable, Codable {
         self.isDirty = try c.decodeIfPresent(Bool.self, forKey: .isDirty) ?? false
         self.showsNotificationBadge = try c.decodeIfPresent(Bool.self, forKey: .showsNotificationBadge) ?? false
         self.isLoading = try c.decodeIfPresent(Bool.self, forKey: .isLoading) ?? false
+        self.isAudioMuted = try c.decodeIfPresent(Bool.self, forKey: .isAudioMuted) ?? false
         self.isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
     }
 
@@ -96,6 +101,7 @@ struct TabItem: Identifiable, Hashable, Codable {
         try c.encode(isDirty, forKey: .isDirty)
         try c.encode(showsNotificationBadge, forKey: .showsNotificationBadge)
         try c.encode(isLoading, forKey: .isLoading)
+        try c.encode(isAudioMuted, forKey: .isAudioMuted)
         try c.encode(isPinned, forKey: .isPinned)
     }
 }

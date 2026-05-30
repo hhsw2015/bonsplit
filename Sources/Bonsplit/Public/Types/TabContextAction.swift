@@ -16,6 +16,7 @@ public enum TabContextAction: String, CaseIterable, Sendable {
     case newBrowserToRight
     case reload
     case duplicate
+    case toggleAudioMute
     case togglePin
     case markAsRead
     case markAsUnread

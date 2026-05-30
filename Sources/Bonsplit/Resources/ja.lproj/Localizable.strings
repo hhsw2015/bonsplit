@@ -12,6 +12,9 @@
 "tabContext.newBrowserTabToRight" = "右側に新しいブラウザータブ";
 "tabContext.reloadTab" = "タブを再読み込み";
 "tabContext.duplicateTab" = "タブを複製";
+"tabContext.muteTab" = "タブをミュート";
+"tabContext.unmuteTab" = "タブのミュートを解除";
+"tabContext.audioMutedAccessibility" = "ミュート中";
 "tabContext.exitZoom" = "ズームを終了";
 "tabContext.zoomPane" = "ペインをズーム";
 "tabContext.unpinTab" = "タブのピン留めを解除";

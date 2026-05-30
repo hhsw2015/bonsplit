@@ -876,6 +876,7 @@ struct TabContextMenuState {
     let isPinned: Bool
     let isUnread: Bool
     let isBrowser: Bool
+    let isAudioMuted: Bool
     let isTerminal: Bool
     let hasCustomTitle: Bool
     let canCloseToLeft: Bool
@@ -1380,6 +1381,7 @@ struct TabBarView: View {
             isPinned: tab.isPinned,
             isUnread: tab.showsNotificationBadge,
             isBrowser: tab.kind == "browser",
+            isAudioMuted: tab.isAudioMuted,
             isTerminal: tab.kind == "terminal",
             hasCustomTitle: tab.hasCustomTitle,
             canCloseToLeft: canCloseToLeft,

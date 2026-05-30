@@ -12,6 +12,9 @@
 "tabContext.newBrowserTabToRight" = "New Browser Tab to Right";
 "tabContext.reloadTab" = "Reload Tab";
 "tabContext.duplicateTab" = "Duplicate Tab";
+"tabContext.muteTab" = "Mute Tab";
+"tabContext.unmuteTab" = "Unmute Tab";
+"tabContext.audioMutedAccessibility" = "Muted";
 "tabContext.exitZoom" = "Exit Zoom";
 "tabContext.zoomPane" = "Zoom Pane";
 "tabContext.unpinTab" = "Unpin Tab";
