@@ -483,6 +483,13 @@ extension BonsplitConfiguration {
         /// Minimum height of a pane
         public var minimumPaneHeight: CGFloat
 
+        /// Thickness, in points, of the divider drawn between split panes.
+        ///
+        /// Defaults to `1` to match the historical hairline divider. Hosts can
+        /// raise this to make the separator between adjacent panes easier to see.
+        /// Values are clamped to a sane range when applied to the split view.
+        public var dividerThickness: CGFloat
+
         /// Whether to show split buttons in the tab bar
         public var showSplitButtons: Bool
 
@@ -559,6 +566,7 @@ extension BonsplitConfiguration {
             tabSpacing: CGFloat = 0,
             minimumPaneWidth: CGFloat = 100,
             minimumPaneHeight: CGFloat = 100,
+            dividerThickness: CGFloat = 1,
             showSplitButtons: Bool = true,
             splitButtons: [SplitActionButton] = SplitActionButton.defaults,
             splitButtonsOnHover: Bool = false,
@@ -578,6 +586,7 @@ extension BonsplitConfiguration {
             self.tabSpacing = tabSpacing
             self.minimumPaneWidth = minimumPaneWidth
             self.minimumPaneHeight = minimumPaneHeight
+            self.dividerThickness = dividerThickness
             self.showSplitButtons = showSplitButtons
             self.splitButtons = Self.uniqueSplitButtons(splitButtons)
             self.splitButtonsOnHover = splitButtonsOnHover

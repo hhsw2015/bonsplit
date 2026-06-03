@@ -40,6 +40,20 @@ enum TabBarMetrics {
     static let minimumPaneHeight: CGFloat = 100
     static let dividerThickness: CGFloat = 1
 
+    /// Lower bound for a host-configured divider thickness. Zero keeps the
+    /// divider hit-testable while letting hosts hide the painted bar.
+    static let minimumDividerThickness: CGFloat = 0
+    /// Upper bound for a host-configured divider thickness. Guards against
+    /// runaway values that would swallow pane content.
+    static let maximumDividerThickness: CGFloat = 12
+
+    /// Clamp a host-supplied divider thickness into a usable range, falling
+    /// back to the hairline default for non-finite input.
+    static func resolvedDividerThickness(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite else { return dividerThickness }
+        return min(max(value, minimumDividerThickness), maximumDividerThickness)
+    }
+
     // MARK: - Animations
 
     static let selectionDuration: Double = 0.15

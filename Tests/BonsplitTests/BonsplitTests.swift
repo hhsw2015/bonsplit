@@ -975,6 +975,22 @@ final class BonsplitTests: XCTestCase {
         XCTAssertEqual(appearance.splitButtons, [duplicateRunTests, .splitRight])
     }
 
+    func testAppearanceDefaultsToHairlineDividerThickness() {
+        XCTAssertEqual(BonsplitConfiguration.Appearance().dividerThickness, 1)
+    }
+
+    func testAppearanceCarriesConfiguredDividerThickness() {
+        let appearance = BonsplitConfiguration.Appearance(dividerThickness: 3)
+        XCTAssertEqual(appearance.dividerThickness, 3)
+    }
+
+    func testResolvedDividerThicknessClampsToRange() {
+        XCTAssertEqual(TabBarMetrics.resolvedDividerThickness(2), 2)
+        XCTAssertEqual(TabBarMetrics.resolvedDividerThickness(-5), TabBarMetrics.minimumDividerThickness)
+        XCTAssertEqual(TabBarMetrics.resolvedDividerThickness(999), TabBarMetrics.maximumDividerThickness)
+        XCTAssertEqual(TabBarMetrics.resolvedDividerThickness(.nan), TabBarMetrics.dividerThickness)
+    }
+
     @MainActor
     func testControllerRequestsCustomAction() {
         let controller = BonsplitController()
