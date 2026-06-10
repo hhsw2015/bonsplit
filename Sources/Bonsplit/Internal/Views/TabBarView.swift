@@ -2349,9 +2349,17 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
                 return
             }
 
+            let orderBeforeReorder = pane.tabs.map { $0.id }
             withTransaction(Transaction(animation: nil)) {
                 pane.moveTab(from: currentSourceIndex, to: targetIndex)
                 bonsplitController.focusPane(pane.id)
+            }
+            if pane.tabs.map({ $0.id }) != orderBeforeReorder {
+                bonsplitController.delegate?.splitTabBar(
+                    bonsplitController,
+                    didReorderTabsInPane: pane.id,
+                    orderedTabIds: pane.tabs.map { TabID(id: $0.id) }
+                )
             }
         }
 
@@ -3391,6 +3399,11 @@ struct TabDropDelegate: DropDelegate {
 
         // Execute synchronously when possible so the dragged tab disappears immediately.
         let applyMove = {
+            // Pre-move order, captured inside the transaction below; the delegate is
+            // fired AFTER the transaction (mirroring the manual-drag path) and only when
+            // the order actually changed, so a no-op move never pushes a spurious
+            // reorder to consumers (e.g. a redundant tmux swap-window).
+            var orderBeforeReorder: [UUID]?
             // Ensure the move itself doesn't animate.
             withTransaction(Transaction(animation: nil)) {
                 if sourcePaneId == pane.id {
@@ -3399,6 +3412,7 @@ struct TabDropDelegate: DropDelegate {
                     if targetIndex == sourceIndex || targetIndex == sourceIndex + 1 {
                         return
                     }
+                    orderBeforeReorder = pane.tabs.map { $0.id }
                     pane.moveTab(from: sourceIndex, to: targetIndex)
                 } else {
                     _ = bonsplitController.moveTab(
@@ -3407,6 +3421,16 @@ struct TabDropDelegate: DropDelegate {
                         atIndex: targetIndex
                     )
                 }
+            }
+            // Outside the transaction, matching the manual-drag path's delegate timing.
+            if sourcePaneId == pane.id,
+               let orderBeforeReorder,
+               pane.tabs.map({ $0.id }) != orderBeforeReorder {
+                bonsplitController.delegate?.splitTabBar(
+                    bonsplitController,
+                    didReorderTabsInPane: pane.id,
+                    orderedTabIds: pane.tabs.map { TabID(id: $0.id) }
+                )
             }
         }
 

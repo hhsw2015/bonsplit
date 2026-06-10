@@ -27,6 +27,10 @@ public protocol BonsplitDelegate: AnyObject {
     /// Called when a tab is moved between panes.
     func splitTabBar(_ controller: BonsplitController, didMoveTab tab: Tab, fromPane source: PaneID, toPane destination: PaneID)
 
+    /// Called after the user reorders tabs within a single pane (drag-reorder).
+    /// `orderedTabIds` is the new full order of that pane's tabs.
+    func splitTabBar(_ controller: BonsplitController, didReorderTabsInPane pane: PaneID, orderedTabIds: [TabID])
+
     // MARK: - Split Lifecycle (Veto Operations)
 
     /// Called when a split is about to be created.
@@ -83,6 +87,7 @@ public extension BonsplitDelegate {
     func splitTabBar(_ controller: BonsplitController, didCloseTab tabId: TabID, fromPane pane: PaneID) {}
     func splitTabBar(_ controller: BonsplitController, didSelectTab tab: Tab, inPane pane: PaneID) {}
     func splitTabBar(_ controller: BonsplitController, didMoveTab tab: Tab, fromPane source: PaneID, toPane destination: PaneID) {}
+    func splitTabBar(_ controller: BonsplitController, didReorderTabsInPane pane: PaneID, orderedTabIds: [TabID]) {}
     func splitTabBar(_ controller: BonsplitController, shouldSplitPane pane: PaneID, orientation: SplitOrientation) -> Bool { true }
     func splitTabBar(_ controller: BonsplitController, shouldClosePane pane: PaneID) -> Bool { true }
     func splitTabBar(_ controller: BonsplitController, didSplitPane originalPane: PaneID, newPane: PaneID, orientation: SplitOrientation) {}
