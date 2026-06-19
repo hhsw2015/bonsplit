@@ -4383,4 +4383,27 @@ final class BonsplitTests: XCTestCase {
         }
         return event
     }
+
+    // MARK: - Tab Width Mode
+
+    /// The tab strip must default to fixed-width sizing so existing layouts are
+    /// unchanged; fill is strictly opt-in.
+    func testTabWidthModeDefaultsToFixed() {
+        XCTAssertEqual(BonsplitConfiguration.Appearance().tabWidthMode, .fixed)
+        XCTAssertEqual(BonsplitConfiguration.Appearance.default.tabWidthMode, .fixed)
+        XCTAssertEqual(BonsplitConfiguration.Appearance.compact.tabWidthMode, .fixed)
+        XCTAssertEqual(BonsplitConfiguration.Appearance.spacious.tabWidthMode, .fixed)
+        XCTAssertEqual(BonsplitConfiguration.default.appearance.tabWidthMode, .fixed)
+    }
+
+    /// Opting into fill is preserved on the configuration and is distinct from fixed.
+    func testTabWidthModeFillIsSettableAndDistinct() {
+        var appearance = BonsplitConfiguration.Appearance()
+        appearance.tabWidthMode = .fill
+        XCTAssertEqual(appearance.tabWidthMode, .fill)
+        XCTAssertNotEqual(BonsplitConfiguration.Appearance.TabWidthMode.fill, .fixed)
+
+        let configured = BonsplitConfiguration.Appearance(tabWidthMode: .fill)
+        XCTAssertEqual(configured.tabWidthMode, .fill)
+    }
 }

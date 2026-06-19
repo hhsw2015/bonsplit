@@ -16,6 +16,21 @@ extension View {
             transaction.animation = nil
         }
     }
+
+    /// Imposes a minimum width on the tab row only when `minWidth` is non-nil.
+    ///
+    /// Used by the tab strip's fill mode to force the horizontal `ScrollView` to hand
+    /// the row the full viewport width so SwiftUI can distribute slack across flexible
+    /// tabs. Passing `nil` returns the view untouched, preserving the fixed-width layout
+    /// byte-for-byte.
+    @ViewBuilder
+    func tabRowFillMinWidth(_ minWidth: CGFloat?) -> some View {
+        if let minWidth {
+            frame(minWidth: minWidth, alignment: .leading)
+        } else {
+            self
+        }
+    }
 }
 
 private enum TabControlShortcutHintDebugSettings {
@@ -64,6 +79,9 @@ struct TabItemView: View {
     let isSelected: Bool
     let showsZoomIndicator: Bool
     let appearance: BonsplitConfiguration.Appearance
+    /// When true, the tab drops its fixed maximum width and grows to fill the slack
+    /// the enclosing tab strip distributes (see ``BonsplitConfiguration/Appearance/tabWidthMode``).
+    let fillsWidth: Bool
     let saturation: Double
     let trailingSeparatorBottomInset: CGFloat
     let controlShortcutDigit: Int?
@@ -211,7 +229,9 @@ struct TabItemView: View {
         .padding(.horizontal, TabBarMetrics.tabHorizontalPadding)
         .frame(
             minWidth: tabWidthRange.lowerBound,
-            maxWidth: tabWidthRange.upperBound,
+            // In fill mode the tab becomes flexible so the tab strip can distribute
+            // slack equally across tabs; the fixed upper bound only applies otherwise.
+            maxWidth: fillsWidth ? .infinity : tabWidthRange.upperBound,
             minHeight: tabHeight,
             maxHeight: tabHeight
         )

@@ -5,6 +5,15 @@ All notable changes to Bonsplit will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `BonsplitConfiguration.Appearance.tabWidthMode` (`TabWidthMode`) to control tab sizing.
+  - `.fixed` (default) keeps the historical fixed-width + horizontal-scroll layout unchanged.
+  - `.fill` stretches tabs to fill the pane's available tab-bar width, distributing the
+    space equally; a single tab spans the full width. Tabs fall back to fixed sizing and
+    scroll when they would overflow at their natural width.
+
 ## [1.1.1] - 2025-01-29
 
 ### Fixed

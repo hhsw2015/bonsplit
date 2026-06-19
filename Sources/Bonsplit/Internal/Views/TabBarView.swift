@@ -977,6 +977,20 @@ struct TabBarView: View {
         controller.configuration.appearance
     }
 
+    /// Whether tabs should stretch to fill the pane's available tab-bar width.
+    private var fillsTabsToWidth: Bool {
+        appearance.tabWidthMode == .fill
+    }
+
+    /// Minimum width to impose on the (already trailing-inset-padded) tab row when
+    /// filling, so the horizontal `ScrollView` hands the row the full viewport and
+    /// SwiftUI distributes the slack across the flexible tabs. `nil` in fixed mode
+    /// (and before the container width is known) leaves the historical layout intact.
+    private var fillRowMinWidth: CGFloat? {
+        guard fillsTabsToWidth, containerWidth > 0 else { return nil }
+        return containerWidth
+    }
+
     private var tabBarHeight: CGFloat {
         tabBarLayout.barHeight
     }
@@ -1099,6 +1113,45 @@ struct TabBarView: View {
     }
 
 
+    /// The horizontally-scrolling tab row hosted inside the tab strip's `ScrollView`.
+    ///
+    /// Extracted from `body` so the SwiftUI type-checker can resolve the surrounding
+    /// view tree in reasonable time. In fill mode `tabRowFillMinWidth` forces the row
+    /// to the viewport width so the flexible tabs distribute the slack.
+    @ViewBuilder
+    private var tabScrollContent: some View {
+        HStack(spacing: TabBarMetrics.tabSpacing) {
+            Color.clear
+                .frame(width: 0, height: tabBarHeight)
+                .id(leadingScrollAnchorId)
+
+            ForEach(Array(pane.tabs.enumerated()), id: \.element.id) { index, tab in
+                tabItem(for: tab, at: index)
+                    .id(tab.id)
+            }
+
+            // Unified drop zone after the last tab.
+            dropZoneAfterTabs
+        }
+        .padding(.horizontal, TabBarMetrics.barPadding)
+        .padding(.trailing, trailingTabContentInset)
+        .tabRowFillMinWidth(fillRowMinWidth)
+        .frame(height: tabBarHeight, alignment: .top)
+        .animation(nil, value: pane.tabs.map(\.id))
+        .background(
+            GeometryReader { contentGeo in
+                Color.clear
+                    .onChange(of: contentGeo.frame(in: .named("tabScroll"))) { _, newFrame in
+                        updateTabScrollContent(frame: newFrame)
+                    }
+                    .onAppear {
+                        let frame = contentGeo.frame(in: .named("tabScroll"))
+                        updateTabScrollContent(frame: frame)
+                    }
+            }
+        )
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             if appearance.tabBarLeadingInset > 0 && controller.internalController.rootNode.allPaneIds.first == pane.id {
@@ -1113,35 +1166,7 @@ struct TabBarView: View {
             GeometryReader { containerGeo in
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: TabBarMetrics.tabSpacing) {
-                            Color.clear
-                                .frame(width: 0, height: tabBarHeight)
-                                .id(leadingScrollAnchorId)
-
-                            ForEach(Array(pane.tabs.enumerated()), id: \.element.id) { index, tab in
-                                tabItem(for: tab, at: index)
-                                    .id(tab.id)
-                            }
-
-                            // Unified drop zone after the last tab.
-                            dropZoneAfterTabs
-                        }
-                        .padding(.horizontal, TabBarMetrics.barPadding)
-                        .padding(.trailing, trailingTabContentInset)
-                        .frame(height: tabBarHeight, alignment: .top)
-                        .animation(nil, value: pane.tabs.map(\.id))
-                        .background(
-                            GeometryReader { contentGeo in
-                                Color.clear
-                                    .onChange(of: contentGeo.frame(in: .named("tabScroll"))) { _, newFrame in
-                                        updateTabScrollContent(frame: newFrame)
-                                    }
-                                    .onAppear {
-                                        let frame = contentGeo.frame(in: .named("tabScroll"))
-                                        updateTabScrollContent(frame: frame)
-                                    }
-                            }
-                        )
+                        tabScrollContent
                     }
                     .background(
                         TabBarScrollViewResolver { scrollView in
@@ -1309,6 +1334,7 @@ struct TabBarView: View {
             isSelected: pane.selectedTabId == tab.id,
             showsZoomIndicator: showsZoomIndicator,
             appearance: appearance,
+            fillsWidth: fillsTabsToWidth,
             saturation: tabBarSaturation,
             trailingSeparatorBottomInset: isImmediatelyBeforeSelected
                 ? TabBarMetrics.selectedTabLeftSeparatorBottomInset
