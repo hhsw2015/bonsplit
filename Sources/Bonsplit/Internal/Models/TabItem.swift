@@ -25,6 +25,9 @@ struct TabItem: Identifiable, Hashable, Codable {
     var showsNotificationBadge: Bool
     var isLoading: Bool
     var isAudioMuted: Bool
+    /// Whether the tab is actively producing audible audio (library
+    /// consumer-defined meaning, e.g. a browser page playing sound).
+    var isAudioPlaying: Bool
     var isPinned: Bool
 
     init(
@@ -38,6 +41,7 @@ struct TabItem: Identifiable, Hashable, Codable {
         showsNotificationBadge: Bool = false,
         isLoading: Bool = false,
         isAudioMuted: Bool = false,
+        isAudioPlaying: Bool = false,
         isPinned: Bool = false
     ) {
         self.id = id
@@ -50,6 +54,7 @@ struct TabItem: Identifiable, Hashable, Codable {
         self.showsNotificationBadge = showsNotificationBadge
         self.isLoading = isLoading
         self.isAudioMuted = isAudioMuted
+        self.isAudioPlaying = isAudioPlaying
         self.isPinned = isPinned
     }
 
@@ -72,6 +77,7 @@ struct TabItem: Identifiable, Hashable, Codable {
         case showsNotificationBadge
         case isLoading
         case isAudioMuted
+        case isAudioPlaying
         case isPinned
     }
 
@@ -87,6 +93,7 @@ struct TabItem: Identifiable, Hashable, Codable {
         self.showsNotificationBadge = try c.decodeIfPresent(Bool.self, forKey: .showsNotificationBadge) ?? false
         self.isLoading = try c.decodeIfPresent(Bool.self, forKey: .isLoading) ?? false
         self.isAudioMuted = try c.decodeIfPresent(Bool.self, forKey: .isAudioMuted) ?? false
+        self.isAudioPlaying = try c.decodeIfPresent(Bool.self, forKey: .isAudioPlaying) ?? false
         self.isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
     }
 
@@ -102,6 +109,7 @@ struct TabItem: Identifiable, Hashable, Codable {
         try c.encode(showsNotificationBadge, forKey: .showsNotificationBadge)
         try c.encode(isLoading, forKey: .isLoading)
         try c.encode(isAudioMuted, forKey: .isAudioMuted)
+        try c.encode(isAudioPlaying, forKey: .isAudioPlaying)
         try c.encode(isPinned, forKey: .isPinned)
     }
 }

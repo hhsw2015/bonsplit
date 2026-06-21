@@ -17,6 +17,9 @@ public struct Tab: Identifiable, Hashable, Sendable {
     public let isLoading: Bool
     /// Whether the tab should show browser audio as muted.
     public let isAudioMuted: Bool
+    /// Whether the tab is actively producing audible audio (for example, a
+    /// browser page playing sound). Drives a click-to-mute speaker affordance.
+    public let isAudioPlaying: Bool
     /// Whether the tab is pinned in its pane.
     public let isPinned: Bool
 
@@ -31,6 +34,7 @@ public struct Tab: Identifiable, Hashable, Sendable {
         showsNotificationBadge: Bool = false,
         isLoading: Bool = false,
         isAudioMuted: Bool = false,
+        isAudioPlaying: Bool = false,
         isPinned: Bool = false
     ) {
         self.id = id
@@ -43,6 +47,7 @@ public struct Tab: Identifiable, Hashable, Sendable {
         self.showsNotificationBadge = showsNotificationBadge
         self.isLoading = isLoading
         self.isAudioMuted = isAudioMuted
+        self.isAudioPlaying = isAudioPlaying
         self.isPinned = isPinned
     }
 
@@ -57,6 +62,7 @@ public struct Tab: Identifiable, Hashable, Sendable {
         self.showsNotificationBadge = tabItem.showsNotificationBadge
         self.isLoading = tabItem.isLoading
         self.isAudioMuted = tabItem.isAudioMuted
+        self.isAudioPlaying = tabItem.isAudioPlaying
         self.isPinned = tabItem.isPinned
     }
 }
