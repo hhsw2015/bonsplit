@@ -47,6 +47,68 @@ private enum TabControlShortcutHintDebugSettings {
     }
 }
 
+enum TabControlShortcutHintStyle {
+    static let fontSize: CGFloat = 9
+    static let fontWeight: Font.Weight = .semibold
+    static let nsFontWeight: NSFont.Weight = .semibold
+    static let fontDesign: Font.Design = .rounded
+    static let foregroundColor = Color.primary
+    static let horizontalPadding: CGFloat = 6
+    static let verticalPadding: CGFloat = 2
+    static let strokeOpacity = 0.30
+    static let strokeWidth: CGFloat = 0.8
+    static let shadowOpacity = 0.22
+    static let shadowRadius: CGFloat = 2
+    static let shadowX: CGFloat = 0
+    static let shadowY: CGFloat = 1
+
+    static let font: Font = .system(size: fontSize, weight: fontWeight, design: fontDesign)
+    static let measurementFont: NSFont = {
+        let baseFont = NSFont.systemFont(ofSize: fontSize, weight: nsFontWeight)
+        return baseFont.fontDescriptor.withDesign(.rounded)
+            .flatMap { NSFont(descriptor: $0, size: fontSize) } ?? baseFont
+    }()
+    static let measurementAttributes: [NSAttributedString.Key: Any] = [
+        .font: measurementFont
+    ]
+}
+
+struct TabControlShortcutHintPillBackground: View {
+    var body: some View {
+        Capsule(style: .continuous)
+            .fill(.regularMaterial)
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(
+                        Color.white.opacity(TabControlShortcutHintStyle.strokeOpacity),
+                        lineWidth: TabControlShortcutHintStyle.strokeWidth
+                    )
+            )
+            .shadow(
+                color: Color.black.opacity(TabControlShortcutHintStyle.shadowOpacity),
+                radius: TabControlShortcutHintStyle.shadowRadius,
+                x: TabControlShortcutHintStyle.shadowX,
+                y: TabControlShortcutHintStyle.shadowY
+            )
+    }
+}
+
+struct TabControlShortcutHintPill: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(TabControlShortcutHintStyle.font)
+            .monospacedDigit()
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundColor(TabControlShortcutHintStyle.foregroundColor)
+            .padding(.horizontal, TabControlShortcutHintStyle.horizontalPadding)
+            .padding(.vertical, TabControlShortcutHintStyle.verticalPadding)
+            .background(TabControlShortcutHintPillBackground())
+    }
+}
+
 enum TabItemStyling {
     static func iconSaturation(hasRasterIcon: Bool, tabSaturation: Double) -> Double {
         hasRasterIcon ? 1.0 : tabSaturation
@@ -56,10 +118,32 @@ enum TabItemStyling {
         isHovered && !isSelected
     }
 
+    static func shortcutHintSlotLabel(label: String?, allowsShortcutHints: Bool) -> String? {
+        allowsShortcutHints ? label : nil
+    }
+
     static func tabWidthRange(for appearance: BonsplitConfiguration.Appearance) -> ClosedRange<CGFloat> {
         let minimum = max(1, TabBarMetrics.tabMinWidth)
         let maximum = max(minimum, appearance.tabMaxWidth)
         return minimum...maximum
+    }
+
+    static func shortcutHintWidth(for label: String) -> CGFloat {
+        let textWidth = (label as NSString).size(withAttributes: TabControlShortcutHintStyle.measurementAttributes).width
+        return ceil(textWidth) + (TabControlShortcutHintStyle.horizontalPadding * 2)
+    }
+
+    static func shortcutHintSlotWidth(
+        label: String?,
+        showsShortcutHint _: Bool,
+        accessorySlotSize: CGFloat,
+        xOffset: Double
+    ) -> CGFloat {
+        guard let label else {
+            return accessorySlotSize
+        }
+        let positiveDebugInset = max(0, CGFloat(TabControlShortcutHintDebugSettings.clamped(xOffset))) + 2
+        return max(accessorySlotSize, shortcutHintWidth(for: label) + positiveDebugInset)
     }
 
     static func resolvedFaviconImage(existing: NSImage?, incomingData: Data?) -> NSImage? {
@@ -374,14 +458,18 @@ struct TabItemView: View {
     }
 
     private var shortcutHintSlotWidth: CGFloat {
-        // Only reserve the wider shortcut-hint width while the hint is actually
-        // visible. Otherwise size the trailing slot to the close button so a tab
-        // hugs its content instead of leaving a gap before the close affordance.
-        guard showsShortcutHint, let label = shortcutHintLabel else {
-            return accessorySlotSize
-        }
-        let positiveDebugInset = max(0, CGFloat(TabControlShortcutHintDebugSettings.clamped(controlShortcutHintXOffset))) + 2
-        return max(accessorySlotSize, shortcutHintWidth(for: label) + positiveDebugInset)
+        // Reserve the wider shortcut-hint width whenever this tab has a hint,
+        // not only while the modifier is held. Modifier-hold should change
+        // opacity, not the tab strip's measured width.
+        TabItemStyling.shortcutHintSlotWidth(
+            label: TabItemStyling.shortcutHintSlotLabel(
+                label: shortcutHintLabel,
+                allowsShortcutHints: allowsShortcutHints
+            ),
+            showsShortcutHint: showsShortcutHint,
+            accessorySlotSize: accessorySlotSize,
+            xOffset: controlShortcutHintXOffset
+        )
     }
 
     private var accessoryFontSize: CGFloat {
@@ -397,37 +485,11 @@ struct TabItemView: View {
         max(1, appearance.tabBarHeight)
     }
 
-    private func shortcutHintWidth(for label: String) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: accessoryFontSize, weight: .semibold)
-        let textWidth = (label as NSString).size(withAttributes: [.font: font]).width
-        return ceil(textWidth) + 8
-    }
-
     @ViewBuilder
     private var trailingAccessory: some View {
         ZStack(alignment: .center) {
             if let shortcutHintLabel {
-                Text(shortcutHintLabel)
-                    .font(.system(size: accessoryFontSize, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .foregroundStyle(
-                        isSelected
-                            ? TabBarColors.activeText(for: appearance)
-                            : TabBarColors.inactiveText(for: appearance)
-                    )
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(.regularMaterial)
-                            .overlay(
-                                Capsule(style: .continuous)
-                                    .stroke(Color.white.opacity(0.30), lineWidth: 0.8)
-                            )
-                            .shadow(color: Color.black.opacity(0.22), radius: 2, x: 0, y: 1)
-                    )
+                TabControlShortcutHintPill(text: shortcutHintLabel)
                     .offset(
                         x: TabControlShortcutHintDebugSettings.clamped(controlShortcutHintXOffset),
                         y: TabControlShortcutHintDebugSettings.clamped(controlShortcutHintYOffset)

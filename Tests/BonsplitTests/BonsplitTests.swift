@@ -1923,6 +1923,7 @@ final class BonsplitTests: XCTestCase {
             splitButtons: []
         )
         let controller = BonsplitController(configuration: BonsplitConfiguration(appearance: appearance))
+        controller.tabShortcutHintsEnabled = false
         let pane = controller.internalController.rootNode.allPanes.first!
         let tab = TabItem(title: "~", icon: "terminal.fill")
         pane.tabs = [tab]
@@ -2147,6 +2148,10 @@ final class BonsplitTests: XCTestCase {
                 TabControlShortcutHintPolicy.hintModifier(for: [.command], defaults: defaults)?.symbol,
                 "⌃"
             )
+            XCTAssertEqual(
+                TabControlShortcutHintPolicy.configuredShortcutModifierSymbol(defaults: defaults),
+                "⌃"
+            )
             XCTAssertNil(TabControlShortcutHintPolicy.hintModifier(for: [], defaults: defaults))
             XCTAssertNil(TabControlShortcutHintPolicy.hintModifier(for: [.control, .shift], defaults: defaults))
             XCTAssertNil(TabControlShortcutHintPolicy.hintModifier(for: [.command, .option], defaults: defaults))
@@ -2164,6 +2169,10 @@ final class BonsplitTests: XCTestCase {
 
             let custom = TabControlShortcutHintPolicy.hintModifier(for: [.command], defaults: defaults)
             XCTAssertEqual(custom?.symbol, "⌥⌘")
+            XCTAssertEqual(
+                TabControlShortcutHintPolicy.configuredShortcutModifierSymbol(defaults: defaults),
+                "⌥⌘"
+            )
             XCTAssertEqual(
                 TabControlShortcutHintPolicy.hintModifier(for: [.command], defaults: defaults)?.symbol,
                 "⌥⌘"
@@ -2435,6 +2444,57 @@ final class BonsplitTests: XCTestCase {
 
         XCTAssertEqual(range.lowerBound, TabBarMetrics.tabMinWidth)
         XCTAssertEqual(range.upperBound, 220)
+    }
+
+    func testTabShortcutHintSlotWidthDoesNotChangeWithVisibility() {
+        let label = "⌃9"
+        let accessorySlotSize: CGFloat = 18
+
+        let hiddenWidth = TabItemStyling.shortcutHintSlotWidth(
+            label: label,
+            showsShortcutHint: false,
+            accessorySlotSize: accessorySlotSize,
+            xOffset: 0
+        )
+        let visibleWidth = TabItemStyling.shortcutHintSlotWidth(
+            label: label,
+            showsShortcutHint: true,
+            accessorySlotSize: accessorySlotSize,
+            xOffset: 0
+        )
+
+        XCTAssertEqual(hiddenWidth, visibleWidth)
+        XCTAssertGreaterThanOrEqual(hiddenWidth, accessorySlotSize)
+    }
+
+    func testTabShortcutHintSlotLabelRequiresHintEligibility() {
+        let label = "⌃9"
+
+        XCTAssertEqual(
+            TabItemStyling.shortcutHintSlotLabel(label: label, allowsShortcutHints: true),
+            label
+        )
+        XCTAssertNil(
+            TabItemStyling.shortcutHintSlotLabel(label: label, allowsShortcutHints: false)
+        )
+    }
+
+    func testTabShortcutHintWidthUsesSharedPillPadding() {
+        let label = "⌘9"
+        let textWidth = (label as NSString).size(
+            withAttributes: TabControlShortcutHintStyle.measurementAttributes
+        ).width
+
+        XCTAssertEqual(
+            TabItemStyling.shortcutHintWidth(for: label),
+            ceil(textWidth) + (TabControlShortcutHintStyle.horizontalPadding * 2)
+        )
+    }
+
+    func testTabShortcutHintStyleMatchesCommandHintPillFont() {
+        XCTAssertEqual(TabControlShortcutHintStyle.fontSize, 9)
+        XCTAssertEqual(TabControlShortcutHintStyle.nsFontWeight, .semibold)
+        XCTAssertEqual(TabControlShortcutHintStyle.measurementFont.fontDescriptor.object(forKey: .face) as? String, "Semibold")
     }
 
     func testActiveTabIndicatorHeightIsOneAndHalfPixels() {
@@ -4101,6 +4161,7 @@ final class BonsplitTests: XCTestCase {
         extract: (NSView) -> T?
     ) -> T? {
         let controller = BonsplitController(configuration: BonsplitConfiguration(appearance: appearance))
+        controller.tabShortcutHintsEnabled = false
         guard let pane = controller.internalController.rootNode.allPanes.first else { return nil }
         if let configurePane {
             configurePane(pane)
