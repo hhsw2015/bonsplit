@@ -118,32 +118,47 @@ enum TabItemStyling {
         isHovered && !isSelected
     }
 
-    static func shortcutHintSlotLabel(label: String?, allowsShortcutHints: Bool) -> String? {
-        allowsShortcutHints ? label : nil
-    }
-
     static func tabWidthRange(for appearance: BonsplitConfiguration.Appearance) -> ClosedRange<CGFloat> {
         let minimum = max(1, TabBarMetrics.tabMinWidth)
         let maximum = max(minimum, appearance.tabMaxWidth)
         return minimum...maximum
     }
 
+    /// Natural width of the ⌃/⌘ shortcut-hint pill for `label`. The standard tab
+    /// strip overlays this pill without reserving width, but icon-only pinned
+    /// browser tabs (which have no close button to overlay) still reserve it so
+    /// holding the modifier never resizes the pinned chip.
     static func shortcutHintWidth(for label: String) -> CGFloat {
         let textWidth = (label as NSString).size(withAttributes: TabControlShortcutHintStyle.measurementAttributes).width
         return ceil(textWidth) + (TabControlShortcutHintStyle.horizontalPadding * 2)
     }
 
-    static func shortcutHintSlotWidth(
-        label: String?,
-        showsShortcutHint _: Bool,
+    /// Width of a tab's trailing accessory slot.
+    ///
+    /// The slot reserves only the close-button (`accessorySlotSize`) width and
+    /// never widens for the keyboard-shortcut hint. The ⌃/⌘ digit pill overlays
+    /// this same slot (it is mutually exclusive with the close button and
+    /// non-interactive), rendering at its natural size within the tab's trailing
+    /// padding instead of pushing layout. Two consequences, both intended:
+    ///   1. A tab carrying a ⌃/⌘ digit is exactly as wide as one without, so the
+    ///      hint feature no longer makes tabs wider.
+    ///   2. The reserved width is a constant, independent of `isFocused`,
+    ///      `tabShortcutHintsEnabled`, the label, and the debug `xOffset`, so the
+    ///      tab bar never shifts when a pane gains/loses focus or ⌃/⌘ is held.
+    /// The parameters are accepted so the call site can pass the live state, but
+    /// none of them may affect the result.
+    static func reservedShortcutHintSlotWidth(
+        shortcutHintLabel: String?,
+        tabShortcutHintsEnabled: Bool,
+        isFocused: Bool,
         accessorySlotSize: CGFloat,
         xOffset: Double
     ) -> CGFloat {
-        guard let label else {
-            return accessorySlotSize
-        }
-        let positiveDebugInset = max(0, CGFloat(TabControlShortcutHintDebugSettings.clamped(xOffset))) + 2
-        return max(accessorySlotSize, shortcutHintWidth(for: label) + positiveDebugInset)
+        // Deliberately ignores every hint/focus input: the pill overlays the
+        // accessory slot, so the reserved layout width is always just the
+        // close-button size. See the doc comment above.
+        _ = (shortcutHintLabel, tabShortcutHintsEnabled, isFocused, xOffset)
+        return accessorySlotSize
     }
 
     static func resolvedFaviconImage(existing: NSImage?, incomingData: Data?) -> NSImage? {
@@ -204,7 +219,11 @@ struct TabItemView: View {
     let saturation: Double
     let trailingSeparatorBottomInset: CGFloat
     let controlShortcutDigit: Int?
-    let allowsShortcutHints: Bool
+    /// Whether tab keyboard-shortcut hints are enabled at all (a global setting,
+    /// independent of which pane is focused). Drives the reserved hint-slot width.
+    let tabShortcutHintsEnabled: Bool
+    /// Whether this tab's pane is focused. Gates hint *visibility*, never width.
+    let isFocused: Bool
     let showsControlShortcutHint: Bool
     let shortcutModifierSymbol: String
     let allowsClose: Bool
@@ -621,6 +640,12 @@ struct TabItemView: View {
         return "\(shortcutModifierSymbol)\(controlShortcutDigit)"
     }
 
+    /// Hints are only ever shown on the focused pane; gating on focus here keeps
+    /// hint visibility scoped to the focused pane while leaving width untouched.
+    private var allowsShortcutHints: Bool {
+        isFocused && tabShortcutHintsEnabled
+    }
+
     private var showsShortcutHint: Bool {
         allowsShortcutHints && (showsControlShortcutHint || alwaysShowShortcutHints) && shortcutHintLabel != nil
     }
@@ -630,15 +655,14 @@ struct TabItemView: View {
     }
 
     private var shortcutHintSlotWidth: CGFloat {
-        // Reserve the wider shortcut-hint width whenever this tab has a hint,
-        // not only while the modifier is held. Modifier-hold should change
-        // opacity, not the tab strip's measured width.
-        TabItemStyling.shortcutHintSlotWidth(
-            label: TabItemStyling.shortcutHintSlotLabel(
-                label: shortcutHintLabel,
-                allowsShortcutHints: allowsShortcutHints
-            ),
-            showsShortcutHint: showsShortcutHint,
+        // Reserve the wider shortcut-hint width whenever hints are enabled and
+        // this tab has a digit, regardless of focus or modifier-hold. Both focus
+        // and modifier-hold change the pill's opacity, not the measured width, so
+        // the tab bar never shifts when a pane is focused or ⌃/⌘ is held.
+        TabItemStyling.reservedShortcutHintSlotWidth(
+            shortcutHintLabel: shortcutHintLabel,
+            tabShortcutHintsEnabled: tabShortcutHintsEnabled,
+            isFocused: isFocused,
             accessorySlotSize: accessorySlotSize,
             xOffset: controlShortcutHintXOffset
         )

@@ -1340,7 +1340,8 @@ struct TabBarView: View {
                 ? TabBarMetrics.selectedTabLeftSeparatorBottomInset
                 : 0,
             controlShortcutDigit: tabControlShortcutDigit(for: index, tabCount: pane.tabs.count),
-            allowsShortcutHints: isFocused && splitViewController.tabShortcutHintsEnabled,
+            tabShortcutHintsEnabled: splitViewController.tabShortcutHintsEnabled,
+            isFocused: isFocused,
             showsControlShortcutHint: showsControlShortcutHints,
             shortcutModifierSymbol: controlKeyMonitor.shortcutModifierSymbol,
             allowsClose: controller.configuration.allowCloseTabs,
