@@ -1,6 +1,7 @@
 import XCTest
 @testable import Bonsplit
 import AppKit
+import Observation
 import QuartzCore
 import SwiftUI
 
@@ -144,6 +145,10 @@ final class BonsplitTests: XCTestCase {
         }
     }
 
+    private final class ObservationInvalidationFlag: @unchecked Sendable {
+        var didInvalidate = false
+    }
+
     @MainActor
     func testControllerCreation() {
         let controller = BonsplitController()
@@ -176,6 +181,49 @@ final class BonsplitTests: XCTestCase {
         let tab = controller.tab(tabId)
         XCTAssertEqual(tab?.title, "Updated")
         XCTAssertEqual(tab?.isDirty, true)
+    }
+
+    @MainActor
+    func testNoopTabUpdateDoesNotInvalidateObservedTabMetadata() {
+        let controller = BonsplitController()
+        let tabId = controller.createTab(
+            title: "Original",
+            hasCustomTitle: true,
+            icon: "doc",
+            kind: "terminal",
+            isDirty: true,
+            showsNotificationBadge: true,
+            isLoading: true,
+            isAudioMuted: true,
+            isAudioPlaying: true,
+            isPinned: true
+        )!
+
+        let invalidationFlag = ObservationInvalidationFlag()
+        withObservationTracking {
+            _ = controller.tab(tabId)
+        } onChange: {
+            invalidationFlag.didInvalidate = true
+        }
+
+        controller.updateTab(
+            tabId,
+            title: "Original",
+            icon: .some("doc"),
+            kind: .some("terminal"),
+            hasCustomTitle: true,
+            isDirty: true,
+            showsNotificationBadge: true,
+            isLoading: true,
+            isAudioMuted: true,
+            isAudioPlaying: true,
+            isPinned: true
+        )
+
+        XCTAssertFalse(
+            invalidationFlag.didInvalidate,
+            "Updating a tab with identical metadata should not invalidate SwiftUI observers of tab metadata."
+        )
     }
 
     @MainActor
@@ -1594,6 +1642,120 @@ final class BonsplitTests: XCTestCase {
     }
 
     @MainActor
+    func testFullWidthTabModeAPITracksStateAndUnknownPanesAreSafe() {
+        let controller = BonsplitController()
+        let pane = controller.focusedPaneId!
+        let unknownPane = PaneID()
+
+        XCTAssertFalse(controller.isFullWidthTabMode(inPane: pane))
+        XCTAssertFalse(controller.isFullWidthTabMode(inPane: unknownPane))
+        XCTAssertFalse(controller.setFullWidthTabMode(true, inPane: unknownPane))
+        XCTAssertFalse(controller.toggleFullWidthTabMode(inPane: unknownPane))
+
+        XCTAssertTrue(controller.setFullWidthTabMode(true, inPane: pane))
+        XCTAssertTrue(controller.isFullWidthTabMode(inPane: pane))
+
+        XCTAssertFalse(controller.toggleFullWidthTabMode(inPane: pane))
+        XCTAssertFalse(controller.isFullWidthTabMode(inPane: pane))
+
+        XCTAssertTrue(controller.toggleFullWidthTabMode(inPane: pane))
+        XCTAssertTrue(controller.isFullWidthTabMode(inPane: pane))
+    }
+
+    @MainActor
+    func testFullWidthTabModeIsIndependentPerPaneAndListed() {
+        let controller = BonsplitController()
+        let firstPane = controller.focusedPaneId!
+        guard let secondPane = controller.splitPane(firstPane, orientation: .horizontal) else {
+            return XCTFail("Expected splitPane to create a new pane")
+        }
+
+        XCTAssertTrue(controller.setFullWidthTabMode(true, inPane: firstPane))
+        XCTAssertFalse(controller.isFullWidthTabMode(inPane: secondPane))
+        XCTAssertEqual(controller.fullWidthTabModePaneIds, [firstPane])
+
+        XCTAssertTrue(controller.setFullWidthTabMode(true, inPane: secondPane))
+        XCTAssertEqual(Set(controller.fullWidthTabModePaneIds), Set([firstPane, secondPane]))
+
+        XCTAssertTrue(controller.setFullWidthTabMode(false, inPane: firstPane))
+        XCTAssertEqual(controller.fullWidthTabModePaneIds, [secondPane])
+    }
+
+    @MainActor
+    func testFullWidthTabModeDiesWithClosedPane() {
+        let controller = BonsplitController()
+        let firstPane = controller.focusedPaneId!
+        guard let closingPane = controller.splitPane(firstPane, orientation: .horizontal) else {
+            return XCTFail("Expected splitPane to create a new pane")
+        }
+
+        XCTAssertTrue(controller.setFullWidthTabMode(true, inPane: closingPane))
+        XCTAssertTrue(controller.isFullWidthTabMode(inPane: closingPane))
+
+        XCTAssertTrue(controller.closePane(closingPane))
+        XCTAssertFalse(controller.isFullWidthTabMode(inPane: closingPane))
+
+        guard let recreatedPane = controller.splitPane(firstPane, orientation: .horizontal) else {
+            return XCTFail("Expected splitPane to create another pane")
+        }
+        XCTAssertFalse(controller.isFullWidthTabMode(inPane: recreatedPane))
+    }
+
+    @MainActor
+    func testBeginTabDragTracksStateAndCancelClearsMatchingGeneration() {
+        let controller = SplitViewController()
+        let pane = controller.focusedPane!
+        let tab = pane.selectedTab!
+
+        let generation = controller.beginTabDrag(tab, from: pane.id)
+
+        XCTAssertEqual(controller.dragGeneration, generation)
+        XCTAssertEqual(controller.draggingTab?.id, tab.id)
+        XCTAssertEqual(controller.dragSourcePaneId, pane.id)
+        XCTAssertEqual(controller.activeDragTab?.id, tab.id)
+        XCTAssertEqual(controller.activeDragSourcePaneId, pane.id)
+
+        controller.cancelTabDragIfGenerationMatches(generation)
+
+        XCTAssertNil(controller.draggingTab)
+        XCTAssertNil(controller.dragSourcePaneId)
+        XCTAssertNil(controller.activeDragTab)
+        XCTAssertNil(controller.activeDragSourcePaneId)
+    }
+
+    @MainActor
+    func testCancelTabDragIgnoresStaleGeneration() {
+        let controller = SplitViewController()
+        let firstPane = controller.focusedPane!
+        let firstTab = firstPane.selectedTab!
+
+        let staleGeneration = controller.beginTabDrag(firstTab, from: firstPane.id)
+
+        controller.splitPaneWithTab(
+            firstPane.id,
+            orientation: .horizontal,
+            tab: TabItem(title: "Second"),
+            insertFirst: false
+        )
+        guard let secondPaneId = controller.rootNode.allPaneIds.first(where: { $0 != firstPane.id }),
+              let secondPane = controller.rootNode.findPane(secondPaneId),
+              let secondTab = secondPane.selectedTab else {
+            return XCTFail("Expected splitPane to create another pane with a selected tab")
+        }
+
+        let currentGeneration = controller.beginTabDrag(secondTab, from: secondPane.id)
+        XCTAssertGreaterThan(currentGeneration, staleGeneration)
+
+        controller.cancelTabDragIfGenerationMatches(staleGeneration)
+
+        XCTAssertEqual(controller.dragGeneration, currentGeneration)
+        XCTAssertEqual(controller.draggingTab?.id, secondTab.id)
+        XCTAssertEqual(controller.dragSourcePaneId, secondPane.id)
+        XCTAssertEqual(controller.activeDragTab?.id, secondTab.id)
+        XCTAssertEqual(controller.activeDragSourcePaneId, secondPane.id)
+    }
+
+    @MainActor
     func testRequestTabContextActionForwardsToDelegate() {
         let controller = BonsplitController()
         let pane = controller.focusedPaneId!
@@ -1621,6 +1783,55 @@ final class BonsplitTests: XCTestCase {
         XCTAssertEqual(spy.action, .markAsRead)
         XCTAssertEqual(spy.tabId, tabId)
         XCTAssertEqual(spy.paneId, pane)
+    }
+
+    @MainActor
+    func testRequestTabContextActionTogglesFullWidthTabModeWithoutDelegate() {
+        let controller = BonsplitController()
+        let pane = controller.focusedPaneId!
+        let tabId = controller.createTab(title: "Test", kind: "terminal")!
+
+        controller.requestTabContextAction(.toggleFullWidthTab, for: tabId, inPane: pane)
+
+        XCTAssertTrue(controller.isFullWidthTabMode(inPane: pane))
+
+        controller.requestTabContextAction(.toggleFullWidthTab, for: tabId, inPane: pane)
+
+        XCTAssertFalse(controller.isFullWidthTabMode(inPane: pane))
+    }
+
+    @MainActor
+    func testRequestTabContextActionSelectsTargetTabBeforeFullWidthToggle() {
+        let controller = BonsplitController()
+        let pane = controller.focusedPaneId!
+        let firstTab = controller.createTab(title: "First", kind: "terminal")!
+        let secondTab = controller.createTab(title: "Second", kind: "terminal")!
+        controller.selectTab(firstTab)
+
+        controller.requestTabContextAction(.toggleFullWidthTab, for: secondTab, inPane: pane)
+
+        XCTAssertEqual(controller.selectedTab(inPane: pane)?.id, secondTab)
+        XCTAssertTrue(controller.isFullWidthTabMode(inPane: pane))
+    }
+
+    @MainActor
+    func testRequestTabContextActionUsesFullWidthTabToggleHandlerWhenSet() {
+        let controller = BonsplitController()
+        let pane = controller.focusedPaneId!
+        let tabId = controller.createTab(title: "Test", kind: "terminal")!
+        var requestedTab: TabID?
+        var requestedPane: PaneID?
+        controller.onTabFullWidthToggleRequest = { tab, pane in
+            requestedTab = tab
+            requestedPane = pane
+            return true
+        }
+
+        controller.requestTabContextAction(.toggleFullWidthTab, for: tabId, inPane: pane)
+
+        XCTAssertEqual(requestedTab, tabId)
+        XCTAssertEqual(requestedPane, pane)
+        XCTAssertFalse(controller.isFullWidthTabMode(inPane: pane))
     }
 
     @MainActor
@@ -1767,6 +1978,80 @@ final class BonsplitTests: XCTestCase {
     }
 
     @MainActor
+    func testTabContextMenuCreatesFullWidthTabToggle() throws {
+        let target = TabContextMenuActionTarget()
+        var selectedAction: TabContextAction?
+        target.onContextAction = { selectedAction = $0 }
+        let snapshot = TabContextMenuSnapshot(
+            tabId: UUID(),
+            state: TabContextMenuState(
+                isPinned: false,
+                isUnread: false,
+                isBrowser: false,
+                isAudioMuted: false,
+                isTerminal: true,
+                hasCustomTitle: false,
+                canCloseToLeft: false,
+                canCloseToRight: false,
+                canCloseOthers: false,
+                canMoveToNewWorkspace: false,
+                canMoveToLeftPane: false,
+                canMoveToRightPane: false,
+                canForkConversation: false,
+                forkConversationDefaultAction: .forkConversationRight,
+                isZoomed: false,
+                isFullWidthTabMode: false,
+                hasSplits: false,
+                shortcuts: [:]
+            ),
+            moveDestinationsProvider: { [] },
+            forkConversationOpenAvailabilityProvider: { nil }
+        )
+
+        let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
+        let item = try XCTUnwrap(menu.items.first { $0.title == "Full Width Tab" })
+        target.performContextAction(item)
+
+        XCTAssertEqual(selectedAction, .toggleFullWidthTab)
+        XCTAssertFalse(menu.items.contains { $0.title == "Exit Full Width Tab" })
+    }
+
+    @MainActor
+    func testTabContextMenuUsesExitFullWidthTabTitleWhenEnabled() {
+        let target = TabContextMenuActionTarget()
+        let snapshot = TabContextMenuSnapshot(
+            tabId: UUID(),
+            state: TabContextMenuState(
+                isPinned: false,
+                isUnread: false,
+                isBrowser: false,
+                isAudioMuted: false,
+                isTerminal: true,
+                hasCustomTitle: false,
+                canCloseToLeft: false,
+                canCloseToRight: false,
+                canCloseOthers: false,
+                canMoveToNewWorkspace: false,
+                canMoveToLeftPane: false,
+                canMoveToRightPane: false,
+                canForkConversation: false,
+                forkConversationDefaultAction: .forkConversationRight,
+                isZoomed: false,
+                isFullWidthTabMode: true,
+                hasSplits: false,
+                shortcuts: [:]
+            ),
+            moveDestinationsProvider: { [] },
+            forkConversationOpenAvailabilityProvider: { nil }
+        )
+
+        let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
+
+        XCTAssertTrue(menu.items.contains { $0.title == "Exit Full Width Tab" })
+        XCTAssertFalse(menu.items.contains { $0.title == "Full Width Tab" })
+    }
+
+    @MainActor
     func testTabContextMenuBuilderCreatesForkConversationSubmenu() throws {
         let target = TabContextMenuActionTarget()
         var selectedAction: TabContextAction?
@@ -1852,6 +2137,59 @@ final class BonsplitTests: XCTestCase {
         XCTAssertFalse(forkItem.isEnabled)
         XCTAssertFalse(forkSubmenuItem.isEnabled)
         XCTAssertEqual(destinationItems.map(\.isEnabled), Array(repeating: false, count: 6))
+    }
+
+    @MainActor
+    func testTabContextMenuShowsDisconnectRemoteOnlyWhenAvailable() throws {
+        let target = TabContextMenuActionTarget()
+        var selectedAction: TabContextAction?
+        target.onContextAction = { selectedAction = $0 }
+        func makeState(canDisconnectRemote: Bool) -> TabContextMenuState {
+            TabContextMenuState(
+                isPinned: false,
+                isUnread: false,
+                isBrowser: false,
+                isAudioMuted: false,
+                isTerminal: true,
+                hasCustomTitle: false,
+                canCloseToLeft: false,
+                canCloseToRight: false,
+                canCloseOthers: false,
+                canMoveToNewWorkspace: false,
+                canMoveToLeftPane: false,
+                canMoveToRightPane: false,
+                canForkConversation: false,
+                forkConversationDefaultAction: .forkConversationRight,
+                isZoomed: false,
+                hasSplits: false,
+                shortcuts: [:],
+                canDisconnectRemote: canDisconnectRemote
+            )
+        }
+
+        let withoutRemote = TabContextMenuBuilder.makeMenu(
+            snapshot: TabContextMenuSnapshot(
+                tabId: UUID(),
+                state: makeState(canDisconnectRemote: false),
+                moveDestinationsProvider: { [] },
+                forkConversationOpenAvailabilityProvider: { true }
+            ),
+            target: target
+        )
+        XCTAssertFalse(withoutRemote.items.contains { $0.title == "Disconnect SSH" })
+
+        let withRemote = TabContextMenuBuilder.makeMenu(
+            snapshot: TabContextMenuSnapshot(
+                tabId: UUID(),
+                state: makeState(canDisconnectRemote: true),
+                moveDestinationsProvider: { [] },
+                forkConversationOpenAvailabilityProvider: { true }
+            ),
+            target: target
+        )
+        let disconnectItem = try XCTUnwrap(withRemote.items.first { $0.title == "Disconnect SSH" })
+        target.performContextAction(disconnectItem)
+        XCTAssertEqual(selectedAction, .disconnectRemote)
     }
 
     @MainActor
@@ -2050,6 +2388,25 @@ final class BonsplitTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(renderedPaneContainerHasTabBar(tabCount: 0, visibility: .multipleTabs)))
         XCTAssertFalse(try XCTUnwrap(renderedPaneContainerHasTabBar(tabCount: 1, visibility: .multipleTabs)))
         XCTAssertTrue(try XCTUnwrap(renderedPaneContainerHasTabBar(tabCount: 2, visibility: .multipleTabs)))
+    }
+
+    @MainActor
+    func testFullWidthTabModeRespectsPaneTabBarVisibility() throws {
+        XCTAssertEqual(
+            try XCTUnwrap(renderedFullWidthPaneChromeAlpha(tabCount: 1, visibility: .always)),
+            1,
+            accuracy: 0.01
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(renderedFullWidthPaneChromeAlpha(tabCount: 1, visibility: .multipleTabs)),
+            0,
+            accuracy: 0.01
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(renderedFullWidthPaneChromeAlpha(tabCount: 2, visibility: .multipleTabs)),
+            1,
+            accuracy: 0.01
+        )
     }
 
     func testIconSaturationKeepsRasterFaviconInColorWhenInactive() {
@@ -2674,6 +3031,34 @@ final class BonsplitTests: XCTestCase {
 
         XCTAssertGreaterThan(focusedSaturation, 0.4)
         XCTAssertLessThan(unfocusedSaturation, 0.1)
+    }
+
+    @MainActor
+    func testFullWidthTabModeIndicatorUsesFocusedAccent() {
+        guard let focusedSaturation = renderedFullWidthTabModeIndicatorSaturation(isFocused: true),
+              let unfocusedSaturation = renderedFullWidthTabModeIndicatorSaturation(isFocused: false) else {
+            XCTFail("Expected rendered full-width tab colors")
+            return
+        }
+
+        XCTAssertGreaterThan(focusedSaturation, 0.4)
+        XCTAssertLessThan(unfocusedSaturation, 0.1)
+    }
+
+    @MainActor
+    func testFullWidthTabModeStretchesSelectedTabChrome() {
+        let size = NSSize(width: 320, height: TabBarMetrics.barHeight)
+        guard let range = renderedFullWidthTabModeIndicatorRange(size: size) else {
+            XCTFail("Expected rendered full-width selected tab indicator")
+            return
+        }
+
+        XCTAssertLessThanOrEqual(range.lowerBound, 1)
+        XCTAssertEqual(
+            range.upperBound,
+            size.width - TabBarMetrics.activeIndicatorTrailingInset,
+            accuracy: 1
+        )
     }
 
     @MainActor
@@ -3696,6 +4081,41 @@ final class BonsplitTests: XCTestCase {
     }
 
     @MainActor
+    private func renderedFullWidthTabModeIndicatorSaturation(isFocused: Bool) -> CGFloat? {
+        renderedTabBarValue(
+            isFocused: isFocused,
+            configurePane: { pane in
+                let tab = TabItem(title: "", icon: nil)
+                pane.tabs = [tab]
+                pane.selectedTabId = tab.id
+                pane.isFullWidthTabMode = true
+            }
+        ) { hostingView in
+            let sampleRect = NSRect(x: 4, y: 0, width: 152, height: 4)
+            return maximumSaturation(in: hostingView, sampleRect: sampleRect)
+        }
+    }
+
+    @MainActor
+    private func renderedFullWidthTabModeIndicatorRange(size: NSSize) -> ClosedRange<CGFloat>? {
+        renderedTabBarValue(
+            isFocused: true,
+            size: size,
+            configurePane: { pane in
+                let first = TabItem(title: "First", icon: nil)
+                let selected = TabItem(title: "Selected", icon: "terminal")
+                let third = TabItem(title: "Third", icon: nil)
+                pane.tabs = [first, selected, third]
+                pane.selectedTabId = selected.id
+                pane.isFullWidthTabMode = true
+            }
+        ) { hostingView in
+            let sampleRect = NSRect(x: 0, y: 0, width: size.width, height: 4)
+            return highSaturationRange(in: hostingView, sampleRect: sampleRect)
+        }
+    }
+
+    @MainActor
     private func renderedTabBarIndicatorWidth(isFocused: Bool) -> CGFloat? {
         renderedTabBarValue(isFocused: isFocused) { hostingView in
             let sampleRect = NSRect(x: 0, y: 0, width: 80, height: 4)
@@ -4396,6 +4816,63 @@ final class BonsplitTests: XCTestCase {
             in: hostingView,
             timeout: 0.1
         ) != nil
+    }
+
+    @MainActor
+    private func renderedFullWidthPaneChromeAlpha(
+        tabCount: Int,
+        visibility: TabBarVisibility
+    ) -> CGFloat? {
+        let controller = BonsplitController(
+            configuration: BonsplitConfiguration(tabBarVisibility: visibility)
+        )
+        guard let pane = controller.internalController.rootNode.allPanes.first else { return nil }
+
+        let tabs = (0..<tabCount).map { index in
+            TabItem(title: "Tab \(index + 1)", icon: nil)
+        }
+        pane.tabs = tabs
+        pane.selectedTabId = tabs.first?.id
+        pane.isFullWidthTabMode = true
+
+        let size = NSSize(width: 320, height: 180)
+        let hostingView = NSHostingView(
+            rootView: PaneContainerView(
+                pane: pane,
+                controller: controller.internalController,
+                contentBuilder: { _, _ in Color.clear },
+                emptyPaneBuilder: { _ in Color.clear },
+                showSplitButtons: false,
+                tabBarVisibility: visibility
+            )
+            .environment(controller)
+            .environment(controller.internalController)
+        )
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        defer { window.orderOut(nil) }
+        guard let contentView = window.contentView else { return nil }
+
+        contentView.wantsLayer = true
+        contentView.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingView.frame = NSRect(origin: .zero, size: size)
+        hostingView.autoresizingMask = [.width, .height]
+        contentView.addSubview(hostingView)
+
+        window.makeKeyAndOrderFront(nil)
+        contentView.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        contentView.layoutSubtreeIfNeeded()
+
+        return renderedColorInViewCoordinates(in: hostingView, at: NSPoint(x: 4, y: 0))?
+            .usingColorSpace(.sRGB)?
+            .alphaComponent
     }
 
     @MainActor

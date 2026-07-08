@@ -21,6 +21,8 @@ public enum TabContextAction: String, CaseIterable, Sendable {
     case markAsRead
     case markAsUnread
     case toggleZoom
+    case toggleFullWidthTab
+    case disconnectRemote
     case forkConversation
     case forkConversationRight
     case forkConversationLeft

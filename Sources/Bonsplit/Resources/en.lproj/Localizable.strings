@@ -17,6 +17,10 @@
 "tabContext.audioMutedAccessibility" = "Muted";
 "tabContext.exitZoom" = "Exit Zoom";
 "tabContext.zoomPane" = "Zoom Pane";
+"tabContext.enterFullWidthTab" = "Full Width Tab";
+"tabContext.exitFullWidthTab" = "Exit Full Width Tab";
+"tabContext.switchTab" = "Switch Tab";
+"tabContext.paneActions" = "Pane Actions";
 "tabContext.unpinTab" = "Unpin Tab";
 "tabContext.pinTab" = "Pin Tab";
 "tabContext.markTabAsRead" = "Mark Tab as Read";
@@ -29,3 +33,5 @@
 "tabContext.forkConversation.bottom" = "Bottom Split";
 "tabContext.forkConversation.newTab" = "New Tab";
 "tabContext.forkConversation.newWorkspace" = "New Workspace";
+"tabContext.disconnectRemote" = "Disconnect SSH";
+"tabContext.remoteConnectedAccessibility" = "Connected over SSH";
