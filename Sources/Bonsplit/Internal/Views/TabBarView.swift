@@ -1469,8 +1469,16 @@ struct TabBarView: View {
                 dlog("tab.select pane=\(pane.id.id.uuidString.prefix(5)) tab=\(tab.id.uuidString.prefix(5)) title=\"\(tab.title)\"")
 #endif
                 withTransaction(Transaction(animation: nil)) {
-                    pane.selectTab(tab.id)
-                    controller.focusPane(pane.id)
+                    // Route through the public `selectTab` so the host
+                    // delegate (`splitTabBar didSelectTab`) fires. Directly
+                    // touching `pane.selectTab` here skipped the delegate,
+                    // which meant hosts embedding two BonsplitControllers
+                    // (cmux top strip + per-layout strip) couldn't observe
+                    // top-strip tab clicks and never updated their
+                    // `selectedLayoutTabId`, so the layout below the strip
+                    // stayed visually "stuck" on the previously-selected
+                    // layout.
+                    controller.selectTab(TabID(id: tab.id))
                 }
             },
             onClose: { source in
