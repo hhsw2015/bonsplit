@@ -5,6 +5,12 @@ import Observation
 import QuartzCore
 import SwiftUI
 
+@MainActor
+@Observable
+private final class DropZoneModel {
+    var zone: DropZone?
+}
+
 final class BonsplitTests: XCTestCase {
     @MainActor
     private final class FakeTabBarHitRegionView: NSView {
@@ -88,13 +94,8 @@ final class BonsplitTests: XCTestCase {
     }
 
     @MainActor
-    private final class DropZoneModel: ObservableObject {
-        @Published var zone: DropZone?
-    }
-
-    @MainActor
     private struct PaneDropInteractionHarness: View {
-        @ObservedObject var model: DropZoneModel
+        let model: DropZoneModel
         let probeView: LayoutProbeView
 
         var body: some View {
@@ -184,12 +185,34 @@ final class BonsplitTests: XCTestCase {
     }
 
     @MainActor
+    func testTabIconAssetCreateUpdateClearRoundTrips() {
+        let controller = BonsplitController()
+        let tabId = controller.createTab(
+            title: "Agent",
+            icon: "terminal.fill",
+            iconAsset: "AgentIcons/Claude"
+        )!
+
+        XCTAssertEqual(controller.tab(tabId)?.iconAsset, "AgentIcons/Claude")
+
+        controller.updateTab(tabId, title: "Agent renamed")
+        XCTAssertEqual(controller.tab(tabId)?.iconAsset, "AgentIcons/Claude")
+
+        controller.updateTab(tabId, iconAsset: .some("AgentIcons/Codex"))
+        XCTAssertEqual(controller.tab(tabId)?.iconAsset, "AgentIcons/Codex")
+
+        controller.updateTab(tabId, iconAsset: .some(nil))
+        XCTAssertNil(controller.tab(tabId)?.iconAsset)
+    }
+
+    @MainActor
     func testNoopTabUpdateDoesNotInvalidateObservedTabMetadata() {
         let controller = BonsplitController()
         let tabId = controller.createTab(
             title: "Original",
             hasCustomTitle: true,
             icon: "doc",
+            iconAsset: "AgentIcons/Claude",
             kind: "terminal",
             isDirty: true,
             showsNotificationBadge: true,
@@ -210,6 +233,7 @@ final class BonsplitTests: XCTestCase {
             tabId,
             title: "Original",
             icon: .some("doc"),
+            iconAsset: .some("AgentIcons/Claude"),
             kind: .some("terminal"),
             hasCustomTitle: true,
             isDirty: true,

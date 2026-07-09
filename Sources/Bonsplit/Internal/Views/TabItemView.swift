@@ -31,6 +31,61 @@ extension View {
             self
         }
     }
+
+    @ViewBuilder
+    func tabGeometryDebugFrame(_ onFrame: @escaping (CGRect) -> Void) -> some View {
+#if DEBUG
+        if TabGeometryDebugLog.isEnabled {
+            background(
+                GeometryReader { proxy in
+                    let frame = proxy.frame(in: .global)
+                    Color.clear
+                        .onAppear {
+                            onFrame(frame)
+                        }
+                        .onChange(of: frame) { _, newFrame in
+                            onFrame(newFrame)
+                        }
+                }
+            )
+        } else {
+            self
+        }
+#else
+        self
+#endif
+    }
+
+    @ViewBuilder
+    func tabGeometryDebugOnAppear(_ action: @escaping () -> Void) -> some View {
+#if DEBUG
+        if TabGeometryDebugLog.isEnabled {
+            onAppear(perform: action)
+        } else {
+            self
+        }
+#else
+        self
+#endif
+    }
+
+    @ViewBuilder
+    func tabGeometryDebugOnChange<Value: Equatable>(
+        of value: Value,
+        perform action: @escaping (Value) -> Void
+    ) -> some View {
+#if DEBUG
+        if TabGeometryDebugLog.isEnabled {
+            onChange(of: value) { _, newValue in
+                action(newValue)
+            }
+        } else {
+            self
+        }
+#else
+        self
+#endif
+    }
 }
 
 private enum TabControlShortcutHintDebugSettings {
@@ -246,6 +301,15 @@ struct TabItemView: View {
     @State private var lastLoadingStoppedAt: Date?
     @State private var renderedFaviconData: Data?
     @State private var renderedFaviconImage: NSImage?
+#if DEBUG
+    @State private var debugLastIconFrame: CGRect?
+    @State private var debugLastTitleFrame: CGRect?
+    @State private var debugLastTabFrame: CGRect?
+    @State private var debugLastTitle: String?
+    @State private var debugLastIcon: String?
+    @State private var debugLastIconAsset: String?
+    @State private var debugLastIsLoading: Bool?
+#endif
     @AppStorage(TabControlShortcutHintDebugSettings.xKey) private var controlShortcutHintXOffset = TabControlShortcutHintDebugSettings.defaultX
     @AppStorage(TabControlShortcutHintDebugSettings.yKey) private var controlShortcutHintYOffset = TabControlShortcutHintDebugSettings.defaultY
     @AppStorage(TabControlShortcutHintDebugSettings.alwaysShowKey) private var alwaysShowShortcutHints = TabControlShortcutHintDebugSettings.defaultAlwaysShow
@@ -260,7 +324,8 @@ struct TabItemView: View {
             // Pinned browser tabs pin both bounds to a compact icon-only width.
             maxWidth: frameMaxWidth,
             minHeight: tabHeight,
-            maxHeight: tabHeight
+            maxHeight: tabHeight,
+            alignment: isIconOnlyPinned ? .center : .leading
         )
         // Fixed mode: size each tab to its own content and ignore the width the
         // tab strip would otherwise propose. Without this the flexible `maxWidth`
@@ -306,12 +371,143 @@ struct TabItemView: View {
         .accessibilityValue(accessibilityValue)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .safeHelp(tab.title)
+        .tabGeometryDebugFrame { frame in
+            debugRecordTabFrame(frame)
+        }
+        .tabGeometryDebugOnAppear {
+            debugRecordInitialStateSnapshot()
+        }
+        .tabGeometryDebugOnChange(of: tab.title) { newValue in
+            debugRecordTitleStateChange(newValue)
+        }
+        .tabGeometryDebugOnChange(of: tab.icon) { newValue in
+            debugRecordIconStateChange(newValue)
+        }
+        .tabGeometryDebugOnChange(of: tab.iconAsset) { newValue in
+            debugRecordIconAssetStateChange(newValue)
+        }
+        .tabGeometryDebugOnChange(of: tab.isLoading) { newValue in
+            debugRecordIsLoadingStateChange(newValue)
+        }
     }
 
     /// Whether this tab renders in the compact icon-only style reserved for pinned
     /// browser surfaces (favicon only, no title or trailing affordances).
     private var isIconOnlyPinned: Bool {
         TabItemStyling.isIconOnlyPinned(isPinned: tab.isPinned, kind: tab.kind)
+    }
+
+    private func debugRecordTabFrame(_ frame: CGRect) {
+#if DEBUG
+        guard debugFrameChanged(debugLastTabFrame, frame) else { return }
+        debugLastTabFrame = frame
+#endif
+    }
+
+    private func debugRecordGeometry(which: String, frame: CGRect) {
+#if DEBUG
+        switch which {
+        case "icon":
+            guard debugFrameChanged(debugLastIconFrame, frame) else { return }
+            debugLastIconFrame = frame
+        case "title":
+            guard debugFrameChanged(debugLastTitleFrame, frame) else { return }
+            debugLastTitleFrame = frame
+        default:
+            return
+        }
+        TabGeometryDebugLog.geometry(
+            tabId: tab.id,
+            which: which,
+            frame: frame,
+            tabWidth: debugLastTabFrame?.width,
+            tab: tab,
+            isSelected: isSelected,
+            showsShortcutHint: showsShortcutHint
+        )
+#endif
+    }
+
+    private func debugRecordInitialStateSnapshot() {
+#if DEBUG
+        debugLastTitle = tab.title
+        debugLastIcon = tab.icon
+        debugLastIconAsset = tab.iconAsset
+        debugLastIsLoading = tab.isLoading
+#endif
+    }
+
+    private func debugRecordTitleStateChange(_ newValue: String) {
+#if DEBUG
+        let oldValue = debugLastTitle ?? tab.title
+        guard oldValue != newValue else { return }
+        debugLastTitle = newValue
+        debugRecordStateChange(field: "title", oldValue: oldValue, newValue: newValue)
+#endif
+    }
+
+    private func debugRecordIconStateChange(_ newValue: String?) {
+#if DEBUG
+        let oldValue = debugLastIcon
+        guard oldValue != newValue else { return }
+        debugLastIcon = newValue
+        debugRecordStateChange(
+            field: "icon",
+            oldValue: TabGeometryDebugLog.optional(oldValue),
+            newValue: TabGeometryDebugLog.optional(newValue)
+        )
+#endif
+    }
+
+    private func debugRecordIconAssetStateChange(_ newValue: String?) {
+#if DEBUG
+        let oldValue = debugLastIconAsset
+        guard oldValue != newValue else { return }
+        debugLastIconAsset = newValue
+        debugRecordStateChange(
+            field: "iconAsset",
+            oldValue: TabGeometryDebugLog.optional(oldValue),
+            newValue: TabGeometryDebugLog.optional(newValue)
+        )
+#endif
+    }
+
+    private func debugRecordIsLoadingStateChange(_ newValue: Bool) {
+#if DEBUG
+        let oldValue = debugLastIsLoading
+        guard oldValue != newValue else { return }
+        debugLastIsLoading = newValue
+        debugRecordStateChange(
+            field: "loading",
+            oldValue: TabGeometryDebugLog.optional(oldValue),
+            newValue: String(newValue)
+        )
+#endif
+    }
+
+    private func debugRecordStateChange(field: String, oldValue: String, newValue: String) {
+#if DEBUG
+        TabGeometryDebugLog.stateChange(
+            tabId: tab.id,
+            field: field,
+            oldValue: oldValue,
+            newValue: newValue,
+            tab: tab,
+            isSelected: isSelected,
+            showsShortcutHint: showsShortcutHint
+        )
+#endif
+    }
+
+    private func debugFrameChanged(_ oldFrame: CGRect?, _ newFrame: CGRect) -> Bool {
+#if DEBUG
+        guard let oldFrame else { return true }
+        return abs(oldFrame.origin.x - newFrame.origin.x) > 0.01 ||
+            abs(oldFrame.origin.y - newFrame.origin.y) > 0.01 ||
+            abs(oldFrame.width - newFrame.width) > 0.01
+#else
+        return false
+#endif
     }
 
     @ViewBuilder
@@ -341,6 +537,9 @@ struct TabItemView: View {
                             : TabBarColors.inactiveText(for: appearance)
                     )
                     .saturation(saturation)
+                    .tabGeometryDebugFrame { frame in
+                        debugRecordGeometry(which: "title", frame: frame)
+                    }
 
                 if tab.showsRemoteIndicator {
                     Image(systemName: "network")
@@ -500,6 +699,11 @@ struct TabItemView: View {
                 FaviconIconView(image: image)
                     .frame(width: iconSlotSize, height: iconSlotSize, alignment: .center)
                     .clipped()
+            } else if let iconAsset = tab.iconAsset {
+                Image(iconAsset, bundle: .main)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: compactMarkSize, height: compactMarkSize, alignment: .center)
             } else if let iconName = tab.icon {
                 if iconName == "globe", !showGlobeFallback {
                     // Avoid a distracting "globe -> favicon" flash: show a neutral placeholder
@@ -521,6 +725,9 @@ struct TabItemView: View {
             tx.animation = nil
         }
         .frame(width: iconSlotSize, height: iconSlotSize, alignment: .center)
+        .tabGeometryDebugFrame { frame in
+            debugRecordGeometry(which: "icon", frame: frame)
+        }
         .onAppear {
             updateRenderedFaviconImage()
             updateGlobeFallback()
@@ -636,6 +843,11 @@ struct TabItemView: View {
         TabBarMetrics.closeIconSize * fontScale
     }
 
+    /// Optical mark size for compact glyphs and host-provided asset icons.
+    private var compactMarkSize: CGFloat {
+        max(10, TabBarMetrics.iconSize - 2.5) * fontScale
+    }
+
     /// Spacing between the leading icon and the title, scaled to the font.
     private var scaledContentSpacing: CGFloat {
         TabBarMetrics.contentSpacing * fontScale
@@ -645,7 +857,7 @@ struct TabItemView: View {
         // `terminal.fill` reads visually heavier than most symbols at the same point size.
         // Keep the base sizes hardcoded to avoid cross-glyph layout shifts, then scale to the font.
         if iconName == "terminal.fill" || iconName == "terminal" || iconName == "globe" {
-            return max(10, TabBarMetrics.iconSize - 2.5) * fontScale
+            return compactMarkSize
         }
         return scaledIconSize
     }
