@@ -3433,6 +3433,80 @@ final class BonsplitTests: XCTestCase {
     }
 
     @MainActor
+    func testSyncRestoresDividerThatDriftedOutsideConfiguredRange() throws {
+        let controller = BonsplitController(configuration: BonsplitConfiguration(
+            dividerPositionRange: 0.4...0.6,
+            appearance: .init(enableAnimations: false)
+        ))
+        _ = controller.createTab(title: "Base")
+        let sourcePane = try XCTUnwrap(controller.focusedPaneId)
+        XCTAssertNotNil(controller.splitPane(
+            sourcePane,
+            orientation: .horizontal,
+            initialDividerPosition: 0.4
+        ))
+        guard case .split = controller.treeSnapshot() else {
+            XCTFail("Expected split root")
+            return
+        }
+
+        let hostingView = NSHostingView(
+            rootView: BonsplitView(controller: controller) { _, _ in
+                Color.clear
+            } emptyPane: { _ in
+                Color.clear
+            }
+        )
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        defer { window.orderOut(nil) }
+        let contentView = try XCTUnwrap(window.contentView)
+        hostingView.frame = contentView.bounds
+        hostingView.autoresizingMask = [.width, .height]
+        contentView.addSubview(hostingView)
+        window.makeKeyAndOrderFront(nil)
+        contentView.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        contentView.layoutSubtreeIfNeeded()
+
+        let splitView = try XCTUnwrap(firstDescendant(ofType: NSSplitView.self, in: hostingView))
+        XCTAssertEqual(splitView.arrangedSubviews.count, 2)
+        let available = max(splitView.frame.width - splitView.dividerThickness, 1)
+
+        // Push the divider physically below the configured range without
+        // touching the model — the delegate constrain hooks enforce only the
+        // minimum pane size, mirroring an AppKit-driven (non-drag) resize.
+        // The non-drag resize path re-asserts the model position through
+        // syncPosition; that re-assert must compare the RAW pixel ratio, not a
+        // pre-clamped value that masks the out-of-range divider and
+        // early-returns.
+        splitView.setPosition(available * 0.2, ofDividerAt: 0)
+        splitView.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        contentView.layoutSubtreeIfNeeded()
+        XCTAssertEqual(
+            splitView.arrangedSubviews[0].frame.width / available,
+            0.4,
+            accuracy: 0.02,
+            "Sync should restore an out-of-range divider to the model position"
+        )
+        guard case .split(let finalSplit) = controller.treeSnapshot() else {
+            XCTFail("Expected split root")
+            return
+        }
+        XCTAssertEqual(
+            finalSplit.dividerPosition,
+            0.4,
+            accuracy: 0.0001,
+            "A non-drag resize must not move the model divider position"
+        )
+    }
+
+    @MainActor
     func testTranslucentSplitWrappersStayClear() {
         let appearance = BonsplitConfiguration.Appearance(
             enableAnimations: false,

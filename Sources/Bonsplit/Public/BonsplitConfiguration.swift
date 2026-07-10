@@ -566,6 +566,14 @@ extension BonsplitConfiguration {
         /// Values are clamped to a sane range when applied to the split view.
         public var dividerThickness: CGFloat
 
+        /// Extra points on each side of the drawn divider that still count as
+        /// the divider for drag hit-testing (the effective divider rect).
+        ///
+        /// Defaults to `5`, matching the historical hardcoded expansion. Hosts
+        /// that show a resize cursor over a wider band must raise this to the
+        /// same value so every point that shows the cursor can start a drag.
+        public var dividerHitExpansion: CGFloat
+
         /// Whether to show split buttons in the tab bar
         public var showSplitButtons: Bool
 
@@ -644,6 +652,7 @@ extension BonsplitConfiguration {
             minimumPaneWidth: CGFloat = 100,
             minimumPaneHeight: CGFloat = 100,
             dividerThickness: CGFloat = 1,
+            dividerHitExpansion: CGFloat = 5,
             showSplitButtons: Bool = true,
             splitButtons: [SplitActionButton] = SplitActionButton.defaults,
             splitButtonsOnHover: Bool = false,
@@ -665,6 +674,7 @@ extension BonsplitConfiguration {
             self.minimumPaneWidth = minimumPaneWidth
             self.minimumPaneHeight = minimumPaneHeight
             self.dividerThickness = dividerThickness
+            self.dividerHitExpansion = dividerHitExpansion
             self.showSplitButtons = showSplitButtons
             self.splitButtons = Self.uniqueSplitButtons(splitButtons)
             self.splitButtonsOnHover = splitButtonsOnHover
