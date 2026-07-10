@@ -279,7 +279,7 @@ final class SplitViewController {
 
     private func normalizedInitialDividerPosition(_ position: CGFloat?) -> CGFloat {
         guard let position else { return 0.5 }
-        return min(max(position, 0.1), 0.9)
+        return min(max(position, 0), 1)
     }
 
     /// Close a pane and collapse the split

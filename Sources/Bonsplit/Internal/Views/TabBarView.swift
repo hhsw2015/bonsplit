@@ -1439,22 +1439,26 @@ struct TabBarView: View {
         .overlay(
             TabBarHoverTrackingView { updateTabBarHover($0) }
         )
-        .overlay(
-            TabBarManualReorderTrackingView(
-                pane: pane,
-                bonsplitController: controller,
-                splitViewController: splitViewController,
-                tabFrames: tabFramesInBar,
-                dropTargetIndex: $dropTargetIndex,
-                dropLifecycle: $dropLifecycle
-            )
-        )
-        .background(
-            TabBarHostWindowReader { window in
-                controlKeyMonitor.setHostWindow(window)
+        .overlay {
+            if controller.configuration.allowTabReordering {
+                TabBarManualReorderTrackingView(
+                    pane: pane,
+                    bonsplitController: controller,
+                    splitViewController: splitViewController,
+                    tabFrames: tabFramesInBar,
+                    dropTargetIndex: $dropTargetIndex,
+                    dropLifecycle: $dropLifecycle
+                )
             }
-            .frame(width: 0, height: 0)
-        )
+        }
+        .background {
+            if splitViewController.tabShortcutHintsEnabled {
+                TabBarHostWindowReader { window in
+                    controlKeyMonitor.setHostWindow(window)
+                }
+                .frame(width: 0, height: 0)
+            }
+        }
         // Clear drop state when drag ends elsewhere (cancelled, dropped in another pane, etc.)
         .onChange(of: splitViewController.draggingTab) { _, newValue in
 #if DEBUG
@@ -1470,7 +1474,16 @@ struct TabBarView: View {
             }
         }
         .onAppear {
-            controlKeyMonitor.start()
+            if splitViewController.tabShortcutHintsEnabled {
+                controlKeyMonitor.start()
+            }
+        }
+        .onChange(of: splitViewController.tabShortcutHintsEnabled) { _, enabled in
+            if enabled {
+                controlKeyMonitor.start()
+            } else {
+                controlKeyMonitor.stop()
+            }
         }
         .onPreferenceChange(TabFramePreferenceKey.self) { frames in
             withTransaction(Transaction(animation: nil)) {
@@ -1515,6 +1528,7 @@ struct TabBarView: View {
             showsControlShortcutHint: showsControlShortcutHints,
             shortcutModifierSymbol: controlKeyMonitor.shortcutModifierSymbol,
             allowsClose: controller.configuration.allowCloseTabs,
+            allowsContextMenu: controller.configuration.allowsTabContextMenu,
             contextMenuState: contextMenuState,
             moveDestinationsProvider: {
                 controller.tabContextMoveDestinationsProvider?(TabID(id: tab.id), pane.id) ?? []
@@ -3585,6 +3599,7 @@ struct TabDropDelegate: DropDelegate {
               let sourcePaneId = controller.activeDragSourcePaneId ?? controller.dragSourcePaneId else {
             if let transfer = decodeTransfer(from: info),
                transfer.isFromCurrentProcess {
+                guard bonsplitController.configuration.allowCrossPaneTabMove else { return false }
                 let request = BonsplitController.ExternalTabDropRequest(
                     tabId: TabID(id: transfer.tab.id),
                     sourcePaneId: PaneID(id: transfer.sourcePaneId),
@@ -3598,6 +3613,12 @@ struct TabDropDelegate: DropDelegate {
             }
 
             return performFileDrop(info: info)
+        }
+
+        if sourcePaneId == pane.id {
+            guard bonsplitController.configuration.allowTabReordering else { return false }
+        } else {
+            guard bonsplitController.configuration.allowCrossPaneTabMove else { return false }
         }
 
         // Execute synchronously when possible so the dragged tab disappears immediately.
@@ -3723,7 +3744,11 @@ struct TabDropDelegate: DropDelegate {
 
         // Local drags use in-memory state and are always same-process.
         if controller.activeDragTab != nil || controller.draggingTab != nil {
-            return true
+            let sourcePaneID = controller.activeDragSourcePaneId ?? controller.dragSourcePaneId
+            if sourcePaneID == pane.id {
+                return bonsplitController.configuration.allowTabReordering
+            }
+            return bonsplitController.configuration.allowCrossPaneTabMove
         }
 
         // External drags (another Bonsplit controller) must include a payload from this process.
@@ -3731,6 +3756,7 @@ struct TabDropDelegate: DropDelegate {
               transfer.isFromCurrentProcess else {
             return false
         }
+        guard bonsplitController.configuration.allowCrossPaneTabMove else { return false }
 #if DEBUG
         let hasDrag = controller.draggingTab != nil
         let hasActive = controller.activeDragTab != nil

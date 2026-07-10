@@ -282,6 +282,7 @@ struct TabItemView: View {
     let showsControlShortcutHint: Bool
     let shortcutModifierSymbol: String
     let allowsClose: Bool
+    let allowsContextMenu: Bool
     let contextMenuState: TabContextMenuState
     let moveDestinationsProvider: () -> [TabContextMoveDestination]
     let forkConversationOpenAvailabilityProvider: () -> Bool?
@@ -343,16 +344,20 @@ struct TabItemView: View {
             guard allowsClose, !tab.isPinned else { return }
             onClose(.middleClick)
         }))
-        .background(TabContextMenuPresenter(
-            snapshot: TabContextMenuSnapshot(
-                tabId: tab.id,
-                state: contextMenuState,
-                moveDestinationsProvider: moveDestinationsProvider,
-                forkConversationOpenAvailabilityProvider: forkConversationOpenAvailabilityProvider
-            ),
-            onContextAction: onContextAction,
-            onMoveDestination: onMoveDestination
-        ))
+        .background {
+            if allowsContextMenu {
+                TabContextMenuPresenter(
+                    snapshot: TabContextMenuSnapshot(
+                        tabId: tab.id,
+                        state: contextMenuState,
+                        moveDestinationsProvider: moveDestinationsProvider,
+                        forkConversationOpenAvailabilityProvider: forkConversationOpenAvailabilityProvider
+                    ),
+                    onContextAction: onContextAction,
+                    onMoveDestination: onMoveDestination
+                )
+            }
+        }
         .onTapGesture {
             onSelect()
         }

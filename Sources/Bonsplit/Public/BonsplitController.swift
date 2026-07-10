@@ -411,6 +411,7 @@ public final class BonsplitController {
         let sourcePaneId = sourcePane.id
 
         if sourcePaneId == targetPane.id {
+            guard configuration.allowTabReordering else { return false }
             // Reorder within same pane.
             let destinationIndex: Int = {
                 if let index { return max(0, min(index, sourcePane.tabs.count)) }
@@ -424,6 +425,7 @@ public final class BonsplitController {
             return true
         }
 
+        guard configuration.allowCrossPaneTabMove else { return false }
         internalController.moveTab(tabItem, from: sourcePaneId, to: targetPane.id, atIndex: index)
         delegate?.splitTabBar(self, didMoveTab: movedTab, fromPane: sourcePaneId, toPane: targetPane.id)
         notifyGeometryChange()
@@ -437,6 +439,7 @@ public final class BonsplitController {
     /// - Returns: true if reordered.
     @discardableResult
     public func reorderTab(_ tabId: TabID, toIndex: Int) -> Bool {
+        guard configuration.allowTabReordering else { return false }
         guard let (pane, sourceIndex) = findTabInternal(tabId) else { return false }
         let destinationIndex = max(0, min(toIndex, pane.tabs.count))
         pane.moveTab(from: sourceIndex, to: destinationIndex)
@@ -510,11 +513,12 @@ public final class BonsplitController {
         }
 
         // Perform split
+        let dividerPosition = normalizedInitialDividerPosition(initialDividerPosition)
         internalController.splitPane(
             PaneID(id: targetPaneId.id),
             orientation: orientation,
             with: internalTab,
-            initialDividerPosition: initialDividerPosition
+            initialDividerPosition: dividerPosition
         )
 
         // Find new pane (will be focused after split)
@@ -575,12 +579,13 @@ public final class BonsplitController {
         )
 
         // Perform split with insertion side.
+        let dividerPosition = normalizedInitialDividerPosition(initialDividerPosition)
         internalController.splitPaneWithTab(
             PaneID(id: targetPaneId.id),
             orientation: orientation,
             tab: internalTab,
             insertFirst: insertFirst,
-            initialDividerPosition: initialDividerPosition
+            initialDividerPosition: dividerPosition
         )
 
         let newPaneId = focusedPaneId!
@@ -591,6 +596,15 @@ public final class BonsplitController {
         notifyGeometryChange()
 
         return newPaneId
+    }
+
+    private func normalizedInitialDividerPosition(_ position: CGFloat?) -> CGFloat? {
+        position.map {
+            min(
+                max($0, configuration.dividerPositionRange.lowerBound),
+                configuration.dividerPositionRange.upperBound
+            )
+        }
     }
 
     /// Split a pane by moving an existing tab into the new pane.
@@ -612,7 +626,8 @@ public final class BonsplitController {
         movingTab tabId: TabID,
         insertFirst: Bool
     ) -> PaneID? {
-        guard configuration.allowSplits else { return nil }
+        guard configuration.allowSplits,
+              configuration.allowCrossPaneTabMove else { return nil }
 
         // Find the existing tab and its source pane.
         guard let (sourcePane, tabIndex) = findTabInternal(tabId) else { return nil }
@@ -939,7 +954,7 @@ public final class BonsplitController {
 
     /// Set divider position for a split node (0.0-1.0)
     /// - Parameters:
-    ///   - position: The new divider position (clamped to 0.1-0.9)
+    ///   - position: The new divider position (clamped to the configured range)
     ///   - splitId: The UUID of the split to update
     ///   - fromExternal: Set to true to suppress outgoing notifications (prevents loops)
     /// - Returns: true if the split was found and updated
@@ -951,8 +966,8 @@ public final class BonsplitController {
             internalController.isExternalUpdateInProgress = true
         }
 
-        // Clamp position to valid range
-        let clampedPosition = min(max(position, 0.1), 0.9)
+        let range = configuration.dividerPositionRange
+        let clampedPosition = min(max(position, range.lowerBound), range.upperBound)
         split.dividerPosition = clampedPosition
 
         if fromExternal {

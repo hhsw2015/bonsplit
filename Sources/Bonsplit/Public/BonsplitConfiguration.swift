@@ -69,6 +69,9 @@ public struct BonsplitConfiguration: Sendable {
     /// Whether to allow moving tabs between panes
     public var allowCrossPaneTabMove: Bool
 
+    /// Whether tabs install and present their standard context menu.
+    public var allowsTabContextMenu: Bool
+
     /// Whether to automatically close empty panes
     public var autoCloseEmptyPanes: Bool
 
@@ -80,6 +83,13 @@ public struct BonsplitConfiguration: Sendable {
 
     /// Controls when pane tab bars are shown
     public var tabBarVisibility: TabBarVisibility
+
+    /// Normalized range allowed for split divider positions.
+    public var dividerPositionRange: ClosedRange<CGFloat> {
+        didSet {
+            dividerPositionRange = Self.normalizedDividerPositionRange(dividerPositionRange)
+        }
+    }
 
     // MARK: - Appearance
 
@@ -110,10 +120,12 @@ public struct BonsplitConfiguration: Sendable {
         allowCloseLastPane: Bool = false,
         allowTabReordering: Bool = true,
         allowCrossPaneTabMove: Bool = true,
+        allowsTabContextMenu: Bool = true,
         autoCloseEmptyPanes: Bool = true,
         contentViewLifecycle: ContentViewLifecycle = .recreateOnSwitch,
         newTabPosition: NewTabPosition = .current,
         tabBarVisibility: TabBarVisibility = .always,
+        dividerPositionRange: ClosedRange<CGFloat> = 0.1...0.9,
         appearance: Appearance = .default
     ) {
         self.allowSplits = allowSplits
@@ -121,11 +133,21 @@ public struct BonsplitConfiguration: Sendable {
         self.allowCloseLastPane = allowCloseLastPane
         self.allowTabReordering = allowTabReordering
         self.allowCrossPaneTabMove = allowCrossPaneTabMove
+        self.allowsTabContextMenu = allowsTabContextMenu
         self.autoCloseEmptyPanes = autoCloseEmptyPanes
         self.contentViewLifecycle = contentViewLifecycle
         self.newTabPosition = newTabPosition
         self.tabBarVisibility = tabBarVisibility
+        self.dividerPositionRange = Self.normalizedDividerPositionRange(dividerPositionRange)
         self.appearance = appearance
+    }
+
+    private static func normalizedDividerPositionRange(
+        _ range: ClosedRange<CGFloat>
+    ) -> ClosedRange<CGFloat> {
+        let lower = min(max(range.lowerBound, 0), 1)
+        let upper = min(max(range.upperBound, lower), 1)
+        return lower...upper
     }
 }
 

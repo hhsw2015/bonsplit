@@ -119,6 +119,7 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
     @Bindable var splitState: SplitState
     let controller: SplitViewController
     let appearance: BonsplitConfiguration.Appearance
+    let dividerPositionRange: ClosedRange<CGFloat>
     let contentBuilder: (TabItem, PaneID) -> Content
     let emptyPaneBuilder: (PaneID) -> EmptyContent
     var showSplitButtons: Bool = true
@@ -135,6 +136,7 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
             splitState: splitState,
             minimumPaneWidth: appearance.minimumPaneWidth,
             minimumPaneHeight: appearance.minimumPaneHeight,
+            dividerPositionRange: dividerPositionRange,
             onGeometryChange: onGeometryChange
         )
     }
@@ -270,7 +272,10 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
             context.coordinator.initialDividerApplyAttempts = 0
 
             if animationOrigin != nil {
-                let targetDividerPosition = min(max(splitState.dividerPosition, 0.1), 0.9)
+                let targetDividerPosition = min(
+                    max(splitState.dividerPosition, dividerPositionRange.lowerBound),
+                    dividerPositionRange.upperBound
+                )
                 let targetPosition = availableSize * targetDividerPosition
                 splitState.dividerPosition = targetDividerPosition
 
@@ -344,6 +349,7 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
             splitState: splitState,
             minimumPaneWidth: appearance.minimumPaneWidth,
             minimumPaneHeight: appearance.minimumPaneHeight,
+            dividerPositionRange: dividerPositionRange,
             onGeometryChange: onGeometryChange
         )
 
@@ -497,6 +503,7 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                 splitState: nestedSplitState,
                 controller: controller,
                 appearance: appearance,
+                dividerPositionRange: dividerPositionRange,
                 contentBuilder: contentBuilder,
                 emptyPaneBuilder: emptyPaneBuilder,
                 showSplitButtons: showSplitButtons,
@@ -516,6 +523,7 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
         private var splitStateId: UUID
         private var minimumPaneWidth: CGFloat
         private var minimumPaneHeight: CGFloat
+        private var dividerPositionRange: ClosedRange<CGFloat>
         weak var splitView: NSSplitView?
         var isAnimating = false
         var didApplyInitialDividerPosition = false
@@ -540,12 +548,14 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
             splitState: SplitState,
             minimumPaneWidth: CGFloat,
             minimumPaneHeight: CGFloat,
+            dividerPositionRange: ClosedRange<CGFloat>,
             onGeometryChange: ((_ isDragging: Bool) -> Void)?
         ) {
             self.splitState = splitState
             self.splitStateId = splitState.id
             self.minimumPaneWidth = minimumPaneWidth
             self.minimumPaneHeight = minimumPaneHeight
+            self.dividerPositionRange = dividerPositionRange
             self.onGeometryChange = onGeometryChange
             self.lastAppliedPosition = splitState.dividerPosition
             self.firstNodeType = splitState.first.nodeType
@@ -556,11 +566,13 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
             splitState newState: SplitState,
             minimumPaneWidth: CGFloat,
             minimumPaneHeight: CGFloat,
+            dividerPositionRange: ClosedRange<CGFloat>,
             onGeometryChange: ((_ isDragging: Bool) -> Void)?
         ) {
             self.onGeometryChange = onGeometryChange
             self.minimumPaneWidth = minimumPaneWidth
             self.minimumPaneHeight = minimumPaneHeight
+            self.dividerPositionRange = dividerPositionRange
 
             // If SwiftUI reused this representable for a different split node,
             // reset our cached sync state so we don't "pin" the divider to an edge.
@@ -610,15 +622,21 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
             let available = splitAvailableSize(in: splitView)
             guard available > 0 else { return 0...1 }
             let minNormalized = min(0.5, effectiveMinimumPaneSize(in: splitView) / available)
-            return minNormalized...(1 - minNormalized)
+            let lower = max(minNormalized, dividerPositionRange.lowerBound)
+            let upper = min(1 - minNormalized, dividerPositionRange.upperBound)
+            if lower <= upper { return lower...upper }
+            let midpoint = min(max(0.5, dividerPositionRange.lowerBound), dividerPositionRange.upperBound)
+            return midpoint...midpoint
         }
 
         private func clampedDividerPosition(_ position: CGFloat, in splitView: NSSplitView) -> CGFloat {
             let available = splitAvailableSize(in: splitView)
             guard available > 0 else { return 0 }
-            let minPaneSize = effectiveMinimumPaneSize(in: splitView)
-            let maxPosition = max(minPaneSize, available - minPaneSize)
-            return min(max(position, minPaneSize), maxPosition)
+            let bounds = normalizedDividerBounds(in: splitView)
+            return min(
+                max(position, available * bounds.lowerBound),
+                available * bounds.upperBound
+            )
         }
 
         private func dividerHitRectContains(_ point: NSPoint, rect: NSRect) -> Bool {

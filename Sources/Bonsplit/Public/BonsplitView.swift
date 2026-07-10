@@ -46,6 +46,7 @@ public struct BonsplitView<Content: View, EmptyContent: View>: View {
                 emptyPaneBuilder(PaneID(id: internalPaneId.id))
             },
             appearance: controller.configuration.appearance,
+            dividerPositionRange: controller.configuration.dividerPositionRange,
             showSplitButtons: controller.configuration.allowSplits && controller.configuration.appearance.showSplitButtons,
             tabBarVisibility: controller.configuration.tabBarVisibility,
             contentViewLifecycle: controller.configuration.contentViewLifecycle,

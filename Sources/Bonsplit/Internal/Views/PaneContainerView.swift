@@ -353,7 +353,7 @@ struct UnifiedPaneDropDelegate: DropDelegate {
 
     private func effectiveZone(for info: DropInfo) -> DropZone {
         let defaultZone = zoneForLocation(info.location)
-        guard !isFileDropOnly(info) else {
+        guard !shouldHandleFileDrop(info, zone: defaultZone) else {
             return defaultZone
         }
         guard let draggedTab = controller.activeDragTab ?? controller.draggingTab,
@@ -411,6 +411,23 @@ struct UnifiedPaneDropDelegate: DropDelegate {
 
         let hasTabTransfer = info.hasItemsConforming(to: [.tabTransfer])
         let hasFileURL = info.hasItemsConforming(to: [.fileURL])
+        let tabTransferPermitted = permitsTabTransfer(
+            hasTabTransfer: hasTabTransfer,
+            zone: zone
+        )
+        if Self.shouldHandleFileDrop(
+            hasTabTransfer: hasTabTransfer,
+            hasFileURL: hasFileURL,
+            permitsTabTransfer: tabTransferPermitted
+        ) {
+            let handled = performFileDrop(info: info, zone: zone)
+            if handled {
+                dropLifecycle = .idle
+                activeDropZone = nil
+            }
+            return handled
+        }
+        guard !hasTabTransfer || tabTransferPermitted else { return false }
 
         // Read from non-observable drag state. @Observable writes from createItemProvider
         // may not have propagated yet when performDrop runs.
@@ -524,9 +541,10 @@ struct UnifiedPaneDropDelegate: DropDelegate {
             return DropProposal(operation: dropOperation(for: info))
         }
         let zone = effectiveZone(for: info)
+        let shouldHandleFileDrop = shouldHandleFileDrop(info, zone: zone)
         guard let acceptedZone = Self.acceptedDropZone(
             zone,
-            isFileDropOnly: isFileDropOnly(info),
+            isFileDropOnly: shouldHandleFileDrop,
             hasExternalFileDropHandler: bonsplitController.onExternalFileDrop != nil,
             hasLegacyFileDropHandler: controller.onFileDrop != nil
         ) else {
@@ -554,15 +572,26 @@ struct UnifiedPaneDropDelegate: DropDelegate {
         let hasTabTransfer = info.hasItemsConforming(to: [.tabTransfer])
         let hasFileURL = info.hasItemsConforming(to: [.fileURL])
         guard hasTabTransfer || hasFileURL else { return false }
+        let zone = effectiveZone(for: info)
+        let tabTransferPermitted = permitsTabTransfer(
+            hasTabTransfer: hasTabTransfer,
+            zone: zone
+        )
 
-        if Self.isFileDropOnly(hasTabTransfer: hasTabTransfer, hasFileURL: hasFileURL) {
+        if Self.shouldHandleFileDrop(
+            hasTabTransfer: hasTabTransfer,
+            hasFileURL: hasFileURL,
+            permitsTabTransfer: tabTransferPermitted
+        ) {
             guard Self.acceptsFileDrop(
-                zone: effectiveZone(for: info),
+                zone: zone,
                 hasExternalFileDropHandler: bonsplitController.onExternalFileDrop != nil,
                 hasLegacyFileDropHandler: controller.onFileDrop != nil
             ), Self.hasReadableFileURLs() else {
                 return false
             }
+        } else if !tabTransferPermitted {
+            return false
         } else if controller.activeDragTab != nil || controller.draggingTab != nil {
             // Local tab drags use in-memory state and are always same-process.
             return true
@@ -617,20 +646,42 @@ struct UnifiedPaneDropDelegate: DropDelegate {
     }
 
     private func dropOperation(for info: DropInfo) -> DropOperation {
-        isFileDropOnly(info)
+        shouldHandleFileDrop(info, zone: effectiveZone(for: info))
             ? .copy
             : .move
     }
 
-    private func isFileDropOnly(_ info: DropInfo) -> Bool {
-        Self.isFileDropOnly(
-            hasTabTransfer: info.hasItemsConforming(to: [.tabTransfer]),
-            hasFileURL: info.hasItemsConforming(to: [.fileURL])
+    private func shouldHandleFileDrop(_ info: DropInfo, zone: DropZone) -> Bool {
+        let hasTabTransfer = info.hasItemsConforming(to: [.tabTransfer])
+        return Self.shouldHandleFileDrop(
+            hasTabTransfer: hasTabTransfer,
+            hasFileURL: info.hasItemsConforming(to: [.fileURL]),
+            permitsTabTransfer: permitsTabTransfer(
+                hasTabTransfer: hasTabTransfer,
+                zone: zone
+            )
         )
     }
 
     static func isFileDropOnly(hasTabTransfer: Bool, hasFileURL: Bool) -> Bool {
         hasFileURL && !hasTabTransfer
+    }
+
+    static func shouldHandleFileDrop(
+        hasTabTransfer: Bool,
+        hasFileURL: Bool,
+        permitsTabTransfer: Bool
+    ) -> Bool {
+        hasFileURL && (!hasTabTransfer || !permitsTabTransfer)
+    }
+
+    private func permitsTabTransfer(hasTabTransfer: Bool, zone: DropZone) -> Bool {
+        guard hasTabTransfer else { return false }
+        let sourcePaneId = controller.activeDragSourcePaneId ?? controller.dragSourcePaneId
+        if zone == .center, sourcePaneId == pane.id {
+            return true
+        }
+        return bonsplitController.configuration.allowCrossPaneTabMove
     }
 
     static func shouldUseLocalTabDrag(
