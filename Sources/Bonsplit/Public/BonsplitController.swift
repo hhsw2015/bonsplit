@@ -118,6 +118,7 @@ public final class BonsplitController {
     public init(configuration: BonsplitConfiguration = .default) {
         self.configuration = configuration
         self.internalController = SplitViewController()
+        internalController.publicController = self
     }
 
     // MARK: - Tab Operations
