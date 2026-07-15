@@ -880,68 +880,6 @@ final class BonsplitTests: XCTestCase {
         XCTAssertEqual(layout.trailingTabContentInset, 0)
     }
 
-    func testTabBarKeepsNonOverflowingTabsLeadingAligned() {
-        let tabId = UUID()
-
-        XCTAssertEqual(
-            TabBarStyling.preferredScrollTarget(
-                selectedTabId: tabId,
-                contentWidth: 132,
-                containerWidth: 349
-            ),
-            .leading,
-            "When the tab strip fits in the pane, it should stay leading-aligned instead of creating a dead leading clip-view band"
-        )
-
-        XCTAssertEqual(
-            TabBarStyling.preferredScrollTarget(
-                selectedTabId: tabId,
-                contentWidth: 420,
-                containerWidth: 349
-            ),
-            .selectedTab(tabId),
-            "Overflowing tab strips should still auto-scroll the selected tab into view"
-        )
-    }
-
-    func testTabBarForcesLeadingResetWhenNonOverflowingStripStaysScrolled() {
-        XCTAssertTrue(
-            TabBarStyling.shouldForceResetToLeading(
-                scrollOffset: 28,
-                contentWidth: 180,
-                containerWidth: 349
-            ),
-            "A non-overflowing tab strip with a stale horizontal offset should be snapped back to x=0"
-        )
-
-        XCTAssertTrue(
-            TabBarStyling.shouldForceResetToLeading(
-                scrollOffset: -30,
-                contentWidth: 180,
-                containerWidth: 349
-            ),
-            "The leading reset must correct both left and right stale offsets"
-        )
-
-        XCTAssertFalse(
-            TabBarStyling.shouldForceResetToLeading(
-                scrollOffset: 0.2,
-                contentWidth: 180,
-                containerWidth: 349
-            ),
-            "Tiny floating-point drift should not trigger redundant clip-view resets"
-        )
-
-        XCTAssertFalse(
-            TabBarStyling.shouldForceResetToLeading(
-                scrollOffset: 28,
-                contentWidth: 420,
-                containerWidth: 349
-            ),
-            "Overflowing tab strips are allowed to stay horizontally scrolled"
-        )
-    }
-
     @MainActor
     func testTabBarHitRegionRegistryTracksVisibleWindowPoint() {
         let window = NSWindow(
@@ -1893,7 +1831,6 @@ final class BonsplitTests: XCTestCase {
             canMoveToNewWorkspace: true,
             canMoveToLeftPane: false,
             canMoveToRightPane: true,
-            canForkConversation: false,
             forkConversationDefaultAction: .forkConversationRight,
             isZoomed: false,
             hasSplits: true,
@@ -1909,7 +1846,7 @@ final class BonsplitTests: XCTestCase {
                     TabContextMoveDestination(id: "workspace:abc", title: "Workspace A", isEnabled: false)
                 ]
             },
-            forkConversationOpenAvailabilityProvider: { nil }
+            forkConversationAvailabilityProvider: { .hidden }
         )
 
         let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
@@ -1950,14 +1887,13 @@ final class BonsplitTests: XCTestCase {
                 canMoveToNewWorkspace: false,
                 canMoveToLeftPane: false,
                 canMoveToRightPane: false,
-                canForkConversation: false,
                 forkConversationDefaultAction: .forkConversationRight,
                 isZoomed: false,
                 hasSplits: false,
                 shortcuts: [:]
             ),
             moveDestinationsProvider: { [] },
-            forkConversationOpenAvailabilityProvider: { nil }
+            forkConversationAvailabilityProvider: { .hidden }
         )
 
         let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
@@ -1985,14 +1921,13 @@ final class BonsplitTests: XCTestCase {
                 canMoveToNewWorkspace: false,
                 canMoveToLeftPane: false,
                 canMoveToRightPane: false,
-                canForkConversation: false,
                 forkConversationDefaultAction: .forkConversationRight,
                 isZoomed: false,
                 hasSplits: false,
                 shortcuts: [:]
             ),
             moveDestinationsProvider: { [] },
-            forkConversationOpenAvailabilityProvider: { nil }
+            forkConversationAvailabilityProvider: { .hidden }
         )
 
         let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
@@ -2021,7 +1956,6 @@ final class BonsplitTests: XCTestCase {
                 canMoveToNewWorkspace: false,
                 canMoveToLeftPane: false,
                 canMoveToRightPane: false,
-                canForkConversation: false,
                 forkConversationDefaultAction: .forkConversationRight,
                 isZoomed: false,
                 isFullWidthTabMode: false,
@@ -2029,7 +1963,7 @@ final class BonsplitTests: XCTestCase {
                 shortcuts: [:]
             ),
             moveDestinationsProvider: { [] },
-            forkConversationOpenAvailabilityProvider: { nil }
+            forkConversationAvailabilityProvider: { .hidden }
         )
 
         let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
@@ -2058,7 +1992,6 @@ final class BonsplitTests: XCTestCase {
                 canMoveToNewWorkspace: false,
                 canMoveToLeftPane: false,
                 canMoveToRightPane: false,
-                canForkConversation: false,
                 forkConversationDefaultAction: .forkConversationRight,
                 isZoomed: false,
                 isFullWidthTabMode: true,
@@ -2066,7 +1999,7 @@ final class BonsplitTests: XCTestCase {
                 shortcuts: [:]
             ),
             moveDestinationsProvider: { [] },
-            forkConversationOpenAvailabilityProvider: { nil }
+            forkConversationAvailabilityProvider: { .hidden }
         )
 
         let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
@@ -2093,7 +2026,6 @@ final class BonsplitTests: XCTestCase {
             canMoveToNewWorkspace: false,
             canMoveToLeftPane: false,
             canMoveToRightPane: false,
-            canForkConversation: true,
             forkConversationDefaultAction: .forkConversationLeft,
             isZoomed: false,
             hasSplits: false,
@@ -2103,11 +2035,11 @@ final class BonsplitTests: XCTestCase {
             tabId: UUID(),
             state: state,
             moveDestinationsProvider: { [] },
-            forkConversationOpenAvailabilityProvider: { nil }
+            forkConversationAvailabilityProvider: { .available }
         )
 
         let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
-        let forkItem = try XCTUnwrap(menu.items.first { $0.title == "Fork Conversation" })
+        let forkItem = try XCTUnwrap(menu.items.first { $0.title == "Fork Conversation to the Left" })
         target.performContextAction(forkItem)
         XCTAssertEqual(selectedAction, .forkConversation)
 
@@ -2140,7 +2072,6 @@ final class BonsplitTests: XCTestCase {
             canMoveToNewWorkspace: false,
             canMoveToLeftPane: false,
             canMoveToRightPane: false,
-            canForkConversation: true,
             forkConversationDefaultAction: .forkConversationLeft,
             isZoomed: false,
             hasSplits: false,
@@ -2150,11 +2081,11 @@ final class BonsplitTests: XCTestCase {
             tabId: UUID(),
             state: state,
             moveDestinationsProvider: { [] },
-            forkConversationOpenAvailabilityProvider: { false }
+            forkConversationAvailabilityProvider: { .refreshing }
         )
 
         let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
-        let forkItem = try XCTUnwrap(menu.items.first { $0.title == "Fork Conversation" })
+        let forkItem = try XCTUnwrap(menu.items.first { $0.title == "Fork Conversation to the Left" })
         let forkSubmenuItem = try XCTUnwrap(menu.items.first { $0.title == "Fork Conversation To" })
         let destinationItems = try XCTUnwrap(forkSubmenuItem.submenu?.items.filter { !$0.isSeparatorItem })
 
@@ -2182,7 +2113,6 @@ final class BonsplitTests: XCTestCase {
                 canMoveToNewWorkspace: false,
                 canMoveToLeftPane: false,
                 canMoveToRightPane: false,
-                canForkConversation: false,
                 forkConversationDefaultAction: .forkConversationRight,
                 isZoomed: false,
                 hasSplits: false,
@@ -2196,7 +2126,7 @@ final class BonsplitTests: XCTestCase {
                 tabId: UUID(),
                 state: makeState(canDisconnectRemote: false),
                 moveDestinationsProvider: { [] },
-                forkConversationOpenAvailabilityProvider: { true }
+                forkConversationAvailabilityProvider: { .available }
             ),
             target: target
         )
@@ -2207,7 +2137,7 @@ final class BonsplitTests: XCTestCase {
                 tabId: UUID(),
                 state: makeState(canDisconnectRemote: true),
                 moveDestinationsProvider: { [] },
-                forkConversationOpenAvailabilityProvider: { true }
+                forkConversationAvailabilityProvider: { .available }
             ),
             target: target
         )
@@ -3181,7 +3111,7 @@ final class BonsplitTests: XCTestCase {
     }
 
     @MainActor
-    func testSplitButtonBackdropOccludesTabChromeAtContentFadeStart() {
+    func testSplitButtonBackdropOccludesTabBodyAtContentFadeStart() {
         guard let saturation = renderedSplitButtonContentFadeStartSaturation() else {
             XCTFail("Expected rendered split button content fade colors")
             return
@@ -3191,14 +3121,22 @@ final class BonsplitTests: XCTestCase {
     }
 
     @MainActor
-    func testSelectedTabIndicatorDoesNotBleedUnderSplitButtonBackdrop() {
+    func testSelectedTabIndicatorFadesWithTabContentBeforeSplitButtonBackdrop() {
         guard let brightnesses = renderedSelectedIndicatorBackdropBrightnesses() else {
             XCTFail("Expected rendered selected indicator backdrop colors")
             return
         }
 
-        XCTAssertLessThan(brightnesses.leading, 0.08)
-        XCTAssertLessThan(brightnesses.trailing, 0.08)
+        XCTAssertGreaterThan(
+            brightnesses.leading,
+            0.2,
+            "The indicator should remain visible where the selected tab begins fading under the action-lane chrome."
+        )
+        XCTAssertLessThan(
+            brightnesses.trailing,
+            brightnesses.leading - 0.1,
+            "The indicator should use the tab content's right-edge fade instead of stopping at a different x-position."
+        )
     }
 
     @MainActor
@@ -4269,6 +4207,10 @@ final class BonsplitTests: XCTestCase {
                 XCTFail("Expected tab bar scroll view for manual scroll regression")
                 return nil
             }
+            NotificationCenter.default.post(
+                name: NSScrollView.willStartLiveScrollNotification,
+                object: scrollView
+            )
             scrollView.contentView.scroll(to: NSPoint(x: 96, y: 0))
             scrollView.reflectScrolledClipView(scrollView.contentView)
             hostingView.layoutSubtreeIfNeeded()
@@ -4503,9 +4445,9 @@ final class BonsplitTests: XCTestCase {
             let laneStartX = size.width - splitButtonLaneWidth
             let sampleRect = NSRect(
                 x: laneStartX - contentFadeWidth + 2,
-                y: 0,
+                y: TabBarMetrics.activeIndicatorHeight + 2,
                 width: 8,
-                height: 4
+                height: 8
             )
             return maximumSaturation(in: hostingView, sampleRect: sampleRect)
         }
