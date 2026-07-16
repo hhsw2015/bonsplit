@@ -76,6 +76,19 @@ public protocol BonsplitDelegate: AnyObject {
 
     /// Called to check if notifications should be sent during divider drag (opt-in for real-time sync)
     func splitTabBar(_ controller: BonsplitController, shouldNotifyDuringDrag: Bool) -> Bool
+
+    /// A divider drag session started: the mouse went down on a divider and
+    /// AppKit's tracking loop is running. Until the matching end, the drag
+    /// owns divider geometry — hosts that impose extents should defer.
+    func splitTabBarDividerDragDidBegin(_ controller: BonsplitController)
+
+    /// The divider drag session ended (mouse released). Delivered from the
+    /// tracking lifecycle itself, so it fires even when no resize callback
+    /// coincides with the release; the final geometry has already been
+    /// reported through `didChangeGeometry`. That report is delivered even
+    /// inside the brief suppression window a `fromExternal` update opens, so
+    /// a release right after an external echo cannot lose it.
+    func splitTabBarDividerDragDidEnd(_ controller: BonsplitController)
 }
 
 // MARK: - Default Implementations (all methods optional)
@@ -99,4 +112,6 @@ public extension BonsplitDelegate {
     func splitTabBar(_ controller: BonsplitController, didRequestTabMoveToDestination destinationId: String, for tab: Tab, inPane pane: PaneID) {}
     func splitTabBar(_ controller: BonsplitController, didChangeGeometry snapshot: LayoutSnapshot) {}
     func splitTabBar(_ controller: BonsplitController, shouldNotifyDuringDrag: Bool) -> Bool { false }
+    func splitTabBarDividerDragDidBegin(_ controller: BonsplitController) {}
+    func splitTabBarDividerDragDidEnd(_ controller: BonsplitController) {}
 }

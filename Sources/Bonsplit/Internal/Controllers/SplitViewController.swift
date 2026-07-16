@@ -70,6 +70,37 @@ final class SplitViewController {
     /// Callback for geometry changes
     var onGeometryChange: (() -> Void)?
 
+    /// Live divider drag sessions across every split in this tree (0 or 1 in
+    /// practice — AppKit tracks one divider at a time). Sessions bracket the
+    /// divider's mouse-tracking lifecycle, so external sizing can consult
+    /// this before writing geometry: mid-drag the user owns the divider.
+    @ObservationIgnored private(set) var activeDividerDragSessions = 0
+    @ObservationIgnored var onDividerDragSessionChange: ((Bool) -> Void)?
+
+    func noteDividerDragSession(_ active: Bool) {
+        // Notify only when the count crosses zero: with overlapping sessions
+        // (a host-bracketed custom drag alongside the built-in tracking),
+        // ending one must not announce "drag over" while the other still
+        // owns the divider — a host would resume imposing under the pointer.
+        let wasActive = activeDividerDragSessions > 0
+        activeDividerDragSessions = max(0, activeDividerDragSessions + (active ? 1 : -1))
+        let isActive = activeDividerDragSessions > 0
+        if wasActive != isActive {
+            onDividerDragSessionChange?(isActive)
+            if !isActive {
+                // Imposed applies refuse while a session is live and stay
+                // armed. Give every still-imposed split one deferred apply
+                // now that the drag released the divider — no epoch bump, so
+                // a split already at its target just refreshes its memos.
+                // The split that was dragged cleared its imposition when the
+                // gesture took ownership, so it skips itself here.
+                for split in allSplits where split.imposedFirstExtent != nil {
+                    split.syncDividerNow?()
+                }
+            }
+        }
+    }
+
     init(rootNode: SplitNode? = nil) {
         let resolvedRoot: SplitNode
         let initialFocusedPaneId: PaneID?

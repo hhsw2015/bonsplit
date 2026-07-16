@@ -97,6 +97,40 @@ private class ThemedSplitView: NSSplitView, BonsplitManagedSplitView {
     // See `NonDraggableHostingView` in SplitNodeView.swift for the rest of
     // the chain.
     override var mouseDownCanMoveWindow: Bool { false }
+
+    /// Brackets a divider drag as a session: fires `true` when a mouseDown
+    /// lands on the divider's effective hit rect, `false` when AppKit's
+    /// divider tracking loop returns at mouseUp. Deterministic — taken from
+    /// the mouse lifecycle itself, never inferred from which event happens
+    /// to be current when a resize callback fires (that inference misses a
+    /// drag-pause-release, where no resize coincides with the mouseUp).
+    var onDividerDragSession: ((Bool) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        // Any mouseDown that reaches the split view itself is a divider
+        // interaction: arranged subviews cover all pane content, so content
+        // clicks never route here, and reconstructing AppKit's exact
+        // effective divider rect (drawn rect grown by the delegate's
+        // expansion, UNIONED with AppKit's own proposal) cannot be done
+        // faithfully from here — a rect test narrower than AppKit's would
+        // let AppKit track a drag with no session, and sizing would impose
+        // under the pointer. A session around a click that AppKit does not
+        // turn into a drag is harmless: begin and end fire back to back and
+        // the host's drag-end sync finds nothing changed.
+        let inDivider = arrangedSubviews.count >= 2
+#if DEBUG
+        if inDivider {
+            let location = convert(event.locationInWindow, from: nil)
+            dlog("divider.session.mouseDown loc=\(Int(location.x)),\(Int(location.y))")
+        }
+#endif
+        if inDivider { onDividerDragSession?(true) }
+        // For a divider hit, super runs AppKit's tracking loop and returns
+        // only after the mouse is released — the session end below is the
+        // guaranteed drag-end signal.
+        defer { if inDivider { onDividerDragSession?(false) } }
+        super.mouseDown(with: event)
+    }
 }
 
 #if DEBUG
@@ -247,6 +281,28 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
         context.coordinator.secondHostingController = secondController
 
         context.coordinator.splitView = splitView
+        let internalController = controller
+        context.coordinator.isTreeDragSessionActive = { [weak internalController] in
+            (internalController?.activeDividerDragSessions ?? 0) > 0
+        }
+        splitView.onDividerDragSession = { [weak coordinator = context.coordinator, weak internalController] active in
+            // The coordinator arms isDragging at begin, before any delegate
+            // reacts to the session. At end the counter's zero crossing
+            // delivers the final geometry notification — forced past the
+            // external-update suppression window — before the delegate hears
+            // drag-end: the delegate contract promises the settled geometry
+            // has already been reported when drag-end runs. Hosts that
+            // suppress geometry callbacks while the session is live lose
+            // nothing — the model is final by then, and drag-end is the
+            // signal to read it.
+            if active {
+                coordinator?.dividerDragSessionChanged(true)
+                internalController?.noteDividerDragSession(true)
+            } else {
+                coordinator?.dividerDragSessionChanged(false)
+                internalController?.noteDividerDragSession(false)
+            }
+        }
 
         // Capture animation origin before it gets cleared
         let animationOrigin = splitState.animationOrigin
@@ -454,6 +510,12 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
         (splitView as? ThemedSplitView)?.customDividerHitExpansion = appearance.dividerHitExpansion
         (splitView as? ThemedSplitView)?.stampedInternalController = controller
         (splitView as? ThemedSplitView)?.stampedSplitId = splitState.id
+        // Re-install alongside the identity stamps above so a reused
+        // coordinator keeps answering for the tree it currently renders.
+        let internalController = controller
+        context.coordinator.isTreeDragSessionActive = { [weak internalController] in
+            (internalController?.activeDividerDragSessions ?? 0) > 0
+        }
 
         // Update orientation if changed
         splitView.isVertical = splitState.orientation == .horizontal
@@ -646,14 +708,19 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
         /// Retry a few turns so entry animations are not dropped on first layout.
         var initialDividerApplyAttempts = 0
         var onGeometryChange: ((_ isDragging: Bool) -> Void)?
+        /// Answers whether a divider drag session is live anywhere in this
+        /// tree. Consulted before every imposed apply: mid-drag the user owns
+        /// the divider, so an apply refuses and stays armed instead of moving
+        /// it under the pointer. Installed from makeNSView/updateNSView.
+        var isTreeDragSessionActive: (() -> Bool)?
         /// Track last applied position to detect external changes
         var lastAppliedPosition: CGFloat = 0.5
-        /// The imposed-extent memo: the last target we asked AppKit for and
-        /// the position it actually produced. Re-apply only when the target
-        /// changes or the divider moved away from that outcome — never in a
-        /// loop against a target AppKit's constraints refuse to reach.
-        var lastImposedTarget: CGFloat?
+        /// What the last imposed apply actually produced, and how big the
+        /// split view was at the time. syncPosition compares against both to
+        /// decide whether a moved divider is put back synchronously (same
+        /// size) or re-armed for one deferred apply at the settled size.
         var lastImposedOutcome: CGFloat?
+        var lastImposedAvail: CGFloat?
         var lastImposedEpoch: Int?
         var imposedRetryBudget = 0
         var imposedApplyPending = false
@@ -705,8 +772,8 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                 splitStateId = newState.id
                 splitState = newState
                 lastAppliedPosition = newState.dividerPosition
-                lastImposedTarget = nil
                 lastImposedOutcome = nil
+                lastImposedAvail = nil
                 lastImposedEpoch = nil
                 imposedRetryBudget = 0
                 didApplyInitialDividerPosition = false
@@ -720,6 +787,22 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
 
             // Same split node; keep reference updated anyway.
             splitState = newState
+        }
+
+        /// Deterministic drag session, bracketed by `ThemedSplitView.mouseDown`
+        /// around AppKit's divider tracking loop. Begin arms the drag before
+        /// any resize callback needs to infer it; end always fires at release.
+        /// The model itself is maintained by the resize callbacks during the
+        /// drag; the guaranteed drag-end geometry notification is delivered by
+        /// the internal controller's zero crossing right after this — from
+        /// there it bypasses the external-update suppression window, which
+        /// would otherwise swallow a release landing within ~50ms of a
+        /// fromExternal call.
+        func dividerDragSessionChanged(_ active: Bool) {
+#if DEBUG
+            dlog("divider.session split=\(String(splitState.id.uuidString.prefix(5))) \(active ? "begin" : "end")")
+#endif
+            isDragging = active
         }
 
         private func splitTotalSize(in splitView: NSSplitView) -> CGFloat {
@@ -832,6 +915,9 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                   let imposed = splitState.imposedFirstExtent,
                   splitView.arrangedSubviews.count >= 2
             else { return }
+            // Refuse mid-drag without consuming budget: the chain resumes
+            // from syncPosition when the session-end renudge lands.
+            if isTreeDragSessionActive?() == true { return }
             imposedRetryBudget -= 1
             let target = clampedDividerPosition(imposed, in: splitView)
             let current = splitState.orientation == .horizontal
@@ -847,6 +933,17 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                 ? splitView.arrangedSubviews[0].frame.width
                 : splitView.arrangedSubviews[0].frame.height
             mirrorImposedOutcome(lastImposedOutcome ?? current, in: splitView)
+            // When this retry finally lands, it resizes everything nested
+            // inside — AFTER those nested splits already applied their own
+            // extents and recorded the result. AppKit resizes them
+            // proportionally, so their dividers end up off the extents they
+            // were given, and nothing else would ever correct that. Ask each
+            // nested imposed split to apply its extent again now that its
+            // container has settled. Runs at most once per retry, and
+            // retries are budgeted.
+            if abs((lastImposedOutcome ?? target) - target) <= 0.01 {
+                renudgeImposedDescendants(of: splitState)
+            }
 #if DEBUG
             dlog(
                 "bonsplit.impose.retry split=\(String(splitState.id.uuidString.prefix(5)))"
@@ -856,6 +953,17 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
 #endif
             if abs((lastImposedOutcome ?? target) - target) > 0.01 {
                 scheduleImposedRetry()
+            }
+        }
+
+        private func renudgeImposedDescendants(of state: SplitState) {
+            for child in [state.first, state.second] {
+                guard case .split(let childState) = child else { continue }
+                if childState.imposedFirstExtent != nil {
+                    childState.imposedEpoch &+= 1
+                    childState.syncDividerNow?()
+                }
+                renudgeImposedDescendants(of: childState)
             }
         }
 
@@ -901,7 +1009,7 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
             if let imposed = splitState.imposedFirstExtent {
                 let target = clampedDividerPosition(imposed, in: splitView)
                 setPositionSafely(target, in: splitView, layout: true)
-                lastImposedTarget = target
+                lastImposedAvail = available
                 lastImposedEpoch = splitState.imposedEpoch
                 lastImposedOutcome = splitState.orientation == .horizontal
                     ? splitView.arrangedSubviews[0].frame.width
@@ -934,6 +1042,17 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
             // exact points and mirrors the resulting fraction back into the
             // model for readers.
             if let imposed = splitState.imposedFirstExtent {
+                // While a drag session owns a divider anywhere in this tree,
+                // an imposed apply refuses outright: no divider write, no
+                // memo or epoch bookkeeping, no retry-budget consumption.
+                // Every imposed-apply trigger funnels through here (fresh
+                // impositions via syncDividerNow, drift renudges, descendant
+                // renudges), so this is the single gate that keeps a
+                // main-queue apply from yanking the divider out from under
+                // the pointer mid-gesture. The pending extent stays armed;
+                // the internal controller's session-end renudge re-runs this
+                // sync once the user's hand is off the divider.
+                if isTreeDragSessionActive?() == true { return }
                 guard splitView.arrangedSubviews.count >= 2 else { return }
                 let available = splitAvailableSize(in: splitView)
                 guard available > 0 else { return }
@@ -948,8 +1067,6 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                 // `current != target` then re-layouts on every pass — a
                 // main-thread spin. Re-apply only when the target changed or
                 // something ELSE moved the divider off our last outcome.
-                let moved = abs(current - (lastImposedOutcome ?? .infinity)) > 0.01
-                let retargeted = abs(target - (lastImposedTarget ?? .infinity)) > 0.01
                 // A fresh imposition call re-arms one apply attempt even for
                 // an identical target: AppKit may have refused this exact
                 // target earlier (transient pane minimums mid-churn), and
@@ -957,21 +1074,37 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                 // would ever retry — panes would sit wedged at the refused
                 // layout. Bounded by explicit calls, so it cannot spin.
                 let renudged = lastImposedEpoch != splitState.imposedEpoch
-                // Never apply when the divider already sits at the target:
-                // a same-position setPosition still runs a layout pass,
-                // which re-applies surface sizes, which re-imposes — a
-                // sustained once-per-turn churn loop at full CPU. Renudge
-                // and retarget only bypass the refusal memo; distance from
-                // the target is what justifies touching AppKit.
+                // A new imposition always applies. Beyond that, when the
+                // divider is not where we left it, what to do depends on
+                // whether the split view itself was resized since we last
+                // applied. If the split view is the SAME size, no new extent
+                // is coming (the host only recomputes when something it can
+                // see changed), so a nudged divider would stay wrong forever
+                // — put it back synchronously; one apply settles it, since
+                // applying cannot resize the split view. If the split view
+                // WAS resized, applying synchronously from inside the
+                // resize's own layout pass fights AppKit, so re-arm one
+                // deferred apply against the settled size instead (below).
+                // We cannot just park and wait for the host: a host whose
+                // per-pane ideals are container-independent re-imposes the
+                // SAME extent, and only when its own inputs change — an
+                // apply may never terminate off-target without a re-arm
+                // edge, or the divider stays at the proportional position
+                // indefinitely. And never apply when the divider is already
+                // at the target: a same-position setPosition still runs a
+                // layout pass, which re-applies surface sizes, which
+                // re-imposes — a once-per-turn churn loop at full CPU.
+                let moved = abs(current - (lastImposedOutcome ?? .infinity)) > 0.01
+                let availUnchanged = abs(available - (lastImposedAvail ?? -1)) <= 0.01
                 if abs(current - target) <= 0.01 {
-                    lastImposedTarget = target
                     lastImposedEpoch = splitState.imposedEpoch
                     lastImposedOutcome = current
+                    lastImposedAvail = available
                     imposedRetryBudget = 0
-                } else if renudged || retargeted || moved {
+                } else if renudged || (moved && availUnchanged) {
                     setPositionSafely(target, in: splitView, layout: true)
-                    lastImposedTarget = target
                     lastImposedEpoch = splitState.imposedEpoch
+                    lastImposedAvail = available
                     lastImposedOutcome = splitState.orientation == .horizontal
                         ? splitView.arrangedSubviews[0].frame.width
                         : splitView.arrangedSubviews[0].frame.height
@@ -979,8 +1112,7 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                     dlog(
                         "bonsplit.impose split=\(String(splitState.id.uuidString.prefix(5)))"
                             + " target=\(Int(target)) outcome=\(Int(lastImposedOutcome ?? -1))"
-                            + " avail=\(Int(available)) renudged=\(renudged ? 1 : 0)"
-                            + " retargeted=\(retargeted ? 1 : 0) moved=\(moved ? 1 : 0)"
+                            + " avail=\(Int(available))"
                     )
 #endif
                     // A refused apply (AppKit clamped against constraints
@@ -997,6 +1129,22 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                     } else {
                         imposedRetryBudget = 0
                     }
+                } else if moved && !availUnchanged {
+                    // The container resized under an unchanged imposed
+                    // extent. Recording the new avail immediately bounds
+                    // this to one re-arm per size change; the deferred
+                    // apply runs a turn later, after AppKit's resize pass
+                    // has finished, so there is no recursive fighting.
+                    lastImposedAvail = available
+                    imposedRetryBudget = max(imposedRetryBudget, 1)
+                    imposedRetrySplitView = splitView
+                    scheduleImposedRetry()
+                } else if imposedRetryBudget > 0 {
+                    // A retry chain the drag-session gate interrupted parked
+                    // here with budget left; the session-end renudge lands in
+                    // this sync, so pick the chain back up.
+                    imposedRetrySplitView = splitView
+                    scheduleImposedRetry()
                 }
                 mirrorImposedOutcome(lastImposedOutcome ?? current, in: splitView)
                 return
@@ -1231,12 +1379,34 @@ struct SplitContainerView<Content: View, EmptyContent: View>: NSViewRepresentabl
                         "divider.resizeIgnored split=\(splitState.id.uuidString.prefix(5)) eventType=\(eventType) leftDown=\(leftDown ? 1 : 0) isDragging=\(isDragging ? 1 : 0) normalized=\(String(format: "%.3f", normalizedPosition)) model=\(String(format: "%.3f", self.splitState.dividerPosition))"
                     )
 #endif
-                    let statePosition = self.splitState.dividerPosition
-                    // Re-assert synchronously. setPositionSafely sets isSyncingProgrammatically=true,
-                    // so the recursive splitViewDidResizeSubviews call is caught by the guard above.
-                    // Deferring to the next runloop turn would allow the transient frame to propagate
-                    // through SwiftUI layout → ghostty terminal resize → reflow, causing content shifts.
-                    self.syncPosition(statePosition, in: splitView)
+                    // A split the user positions by fraction puts its divider
+                    // back right here, synchronously (setPositionSafely sets
+                    // isSyncingProgrammatically, so the recursive didResize is
+                    // caught by the guard above; waiting a turn would let the
+                    // in-between frame reach ghostty and reflow content). A
+                    // split with an imposed extent must NOT do that: putting
+                    // the divider back from inside the very layout pass that
+                    // moved it starts another layout pass — that recursion is
+                    // what pinned the main thread. But it cannot just park
+                    // and wait for the host either: a host whose per-pane
+                    // ideals are container-independent re-imposes the SAME
+                    // extent, and only when its own inputs change, so nothing
+                    // would ever move the divider off AppKit's proportional
+                    // position. Re-arm one deferred apply against the settled
+                    // size instead — recording the new avail immediately
+                    // bounds this to one re-arm per size change, and the
+                    // apply runs a turn later, outside this layout pass. A
+                    // mid-drag retry refuses without consuming the budget and
+                    // the session-end renudge resumes the chain.
+                    if self.splitState.imposedFirstExtent == nil {
+                        let statePosition = self.splitState.dividerPosition
+                        self.syncPosition(statePosition, in: splitView)
+                    } else if abs(availableSize - (self.lastImposedAvail ?? -1)) > 0.01 {
+                        self.lastImposedAvail = availableSize
+                        self.imposedRetryBudget = max(self.imposedRetryBudget, 1)
+                        self.imposedRetrySplitView = splitView
+                        self.scheduleImposedRetry()
+                    }
                     self.onGeometryChange?(false)
                     return
                 }

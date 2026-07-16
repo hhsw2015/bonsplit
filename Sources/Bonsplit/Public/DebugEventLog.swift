@@ -11,6 +11,28 @@ public final class DebugEventLog: @unchecked Sendable {
     private let queue = DispatchQueue(label: "cmux.debug-event-log")
     private static let logPath = resolveLogPath()
 
+    /// When set, lines are handed to this closure instead of appended here.
+    /// A host app whose own debug log writes to the same file installs a
+    /// sink at startup so the file has exactly one serialized append path;
+    /// two independent appenders interleave and reorder lines under load.
+    /// Confined to `queue`.
+    private var externalSink: (@Sendable (String) -> Void)?
+
+    /// Fallback appender for standalone use (no sink installed): one handle
+    /// opened with O_APPEND and kept open, so a concurrent appender cannot
+    /// clobber whole lines. Confined to `queue`.
+    private var appendHandle: FileHandle?
+
+    /// Routes every subsequent line to `sink` (or back to the built-in file
+    /// append when `nil`). The sink receives the raw message, without the
+    /// timestamp prefix, so the receiving log applies its own line format.
+    public static func setExternalSink(_ sink: (@Sendable (String) -> Void)?) {
+        let log = shared
+        log.queue.async {
+            log.externalSink = sink
+        }
+    }
+
     private static let formatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss.SSS"
@@ -55,22 +77,30 @@ public final class DebugEventLog: @unchecked Sendable {
 
     public func log(_ msg: String) {
         let ts = Self.formatter.string(from: Date())
-        let entry = "\(ts) \(msg)"
         queue.async {
+            if let sink = self.externalSink {
+                sink(msg)
+                return
+            }
+            let entry = "\(ts) \(msg)"
             if self.entries.count >= self.capacity {
                 self.entries.removeFirst()
             }
             self.entries.append(entry)
             // Append to file for real-time tail -f
-            let line = entry + "\n"
-            if let data = line.data(using: .utf8) {
-                if let handle = FileHandle(forWritingAtPath: Self.logPath) {
-                    defer { try? handle.close() }
-                    guard (try? handle.seekToEnd()) != nil else { return }
-                    try? handle.write(contentsOf: data)
-                } else {
-                    FileManager.default.createFile(atPath: Self.logPath, contents: data)
+            guard let data = (entry + "\n").data(using: .utf8) else { return }
+            if self.appendHandle == nil {
+                let fd = open(Self.logPath, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+                if fd >= 0 {
+                    self.appendHandle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
                 }
+            }
+            guard let handle = self.appendHandle else { return }
+            do {
+                try handle.write(contentsOf: data)
+            } catch {
+                // The file may have been rotated away; reopen on the next line.
+                self.appendHandle = nil
             }
         }
     }
@@ -78,6 +108,12 @@ public final class DebugEventLog: @unchecked Sendable {
     /// Write all buffered entries to the log file (full dump, replacing contents).
     public func dump() {
         queue.async {
+            // With a sink installed the receiving log owns the file; replacing
+            // its contents here would throw away the other writer's lines.
+            if self.externalSink != nil { return }
+            // The atomic write replaces the inode; reopen the handle lazily.
+            try? self.appendHandle?.close()
+            self.appendHandle = nil
             let content = self.entries.joined(separator: "\n") + "\n"
             try? content.write(toFile: Self.logPath, atomically: true, encoding: .utf8)
         }

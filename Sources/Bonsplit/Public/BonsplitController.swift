@@ -115,6 +115,38 @@ public final class BonsplitController {
         self.configuration = configuration
         self.internalController = SplitViewController()
         internalController.publicController = self
+        internalController.onDividerDragSessionChange = { [weak self] active in
+            guard let self else { return }
+            if active {
+                self.delegate?.splitTabBarDividerDragDidBegin(self)
+            } else {
+                // Drag-end promises the settled geometry has already been
+                // reported when dragDidEnd runs. Deliver it here, on the
+                // session's zero crossing, and force it past the external-
+                // update suppression window: a quick flick can release
+                // within that window's ~50ms of a fromExternal call, and
+                // the gate would silently swallow the one notification the
+                // contract guarantees.
+                self.notifyGeometryChange(force: true)
+                self.delegate?.splitTabBarDividerDragDidEnd(self)
+            }
+        }
+    }
+
+    /// True while the user is dragging a divider anywhere in this tree.
+    /// Sessions bracket the divider's mouse-tracking lifecycle, so this is
+    /// authoritative — not inferred from resize callbacks. While true,
+    /// external sizing must not impose extents: the drag owns geometry.
+    public var isDividerDragActive: Bool {
+        internalController.activeDividerDragSessions > 0
+    }
+
+    /// Brackets a divider drag session from outside the built-in divider
+    /// tracking — for hosts with custom drag surfaces, and for tests that
+    /// need the session state without synthesizing mouse events. Balanced
+    /// begin/end pairs are the caller's responsibility.
+    public func noteDividerDragSession(_ active: Bool) {
+        internalController.noteDividerDragSession(active)
     }
 
     // MARK: - Tab Operations
@@ -1017,9 +1049,25 @@ public final class BonsplitController {
     /// for readers. A user divider drag clears the imposition and returns
     /// the split to fraction semantics. Use this when pane contents are
     /// grid-quantized (terminal cells) and a normalized fraction cannot
-    /// express the required pixel size losslessly. Repeating the same extent
-    /// is idempotent; after an external constraint change, use
-    /// `retryImposedFirstExtent(forSplit:)` to request one fresh bounded apply.
+    /// express the required pixel size losslessly. Every explicit call
+    /// re-arms one bounded apply, including a call that repeats the stored
+    /// extent: hosts re-impose after their container resizes, and the fresh
+    /// plan often computes the SAME extent (per-pane ideals are container-
+    /// independent) while the resize moved the divider off it — deduping the
+    /// call by value would leave the divider wedged at the drifted position.
+    /// Repeating the extent stays cheap when the divider is already at the
+    /// target (the coordinator refreshes its memos without a layout pass).
+    ///
+    /// The extent is applied when set, re-applied if the divider drifts
+    /// while the split view's own size is unchanged, and re-applied once
+    /// (deferred a runloop turn, clamped to the new bounds) after the split
+    /// view itself resizes. The resize case cannot apply synchronously —
+    /// that fights AppKit from inside its own layout pass — but it cannot
+    /// just wait for the host either: a host whose per-pane ideals are
+    /// container-independent re-imposes the same extent, and only when its
+    /// own inputs change, so a divider parked at AppKit's proportional
+    /// position would stay there until some unrelated input. An apply never
+    /// terminates off-target without re-arming on the next size change.
     public func setImposedFirstExtent(
         _ extent: CGFloat?, forSplit splitId: UUID, fromExternal: Bool = false
     ) -> Bool {
@@ -1030,6 +1078,15 @@ public final class BonsplitController {
         let normalizedExtent = extent.map { max(0, $0) }
         if split.imposedFirstExtent != normalizedExtent {
             split.imposedFirstExtent = normalizedExtent
+            split.imposedEpoch &+= 1
+        } else if normalizedExtent != nil {
+            // Same extent, explicit call: re-arm one apply anyway. The
+            // coordinator's renudge path is memo-only when the divider is
+            // already at the target, so this cannot churn layout; when the
+            // divider drifted (a container resize rescaled it while the
+            // re-planned extent came out identical), this puts it back
+            // without waiting for the coordinator's own resize re-arm —
+            // see `syncPosition`'s "bounded by explicit calls" contract.
             split.imposedEpoch &+= 1
         }
         split.syncDividerNow?()
@@ -1048,6 +1105,11 @@ public final class BonsplitController {
     /// `setImposedFirstExtent(_:forSplit:fromExternal:)`, whose identical
     /// updates are intentionally idempotent.
     public func retryImposedFirstExtent(forSplit splitId: UUID) -> Bool {
+        // A live drag session owns the divider: re-asserting an imposed
+        // extent now would yank it out from under the pointer mid-gesture.
+        // Refuse instead of deferring — the host's drag-end sync imposes
+        // fresh values (or retries) once the session closes.
+        guard internalController.activeDividerDragSessions == 0 else { return false }
         guard let split = internalController.findSplit(splitId),
               split.imposedFirstExtent != nil
         else { return false }
@@ -1062,9 +1124,14 @@ public final class BonsplitController {
     }
 
     /// Notify geometry change to delegate (internal use)
-    /// - Parameter isDragging: Whether the change is due to active divider dragging
-    internal func notifyGeometryChange(isDragging: Bool = false) {
-        guard !internalController.isExternalUpdateInProgress else { return }
+    /// - Parameters:
+    ///   - isDragging: Whether the change is due to active divider dragging
+    ///   - force: Deliver even inside the external-update suppression window.
+    ///     Only the drag-end path passes true: its notification is the one
+    ///     the delegate contract guarantees, so the anti-echo gate must not
+    ///     swallow it.
+    internal func notifyGeometryChange(isDragging: Bool = false, force: Bool = false) {
+        guard force || !internalController.isExternalUpdateInProgress else { return }
 
         // If dragging, check if delegate wants notifications during drag
         if isDragging {
